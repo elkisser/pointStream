@@ -22,3 +22,11 @@ contextBridge.exposeInMainWorld('kickAPI', {
     ipcRenderer.on('stream-update', (event, data) => callback(data));
   }
 });
+
+// API de Predicciones CS2
+contextBridge.exposeInMainWorld('predictionsAPI', {
+  analyzeMatch: (team1, team2) => ipcRenderer.invoke('analyze-match', team1, team2),
+  scrapeForg1: () => ipcRenderer.invoke('scrape-forg1-predictions'),
+  autoAnalyze: () => ipcRenderer.invoke('auto-analyze-predictions'),
+  openForg1Login: () => ipcRenderer.invoke('forg1-login')
+});

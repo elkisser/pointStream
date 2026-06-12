@@ -504,3 +504,29 @@ function formatNumber(num) {
 
 // Iniciar aplicación
 init();
+
+// ============================================================
+// Navegación por Tabs
+// ============================================================
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    
+    // Actualizar botones activos
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    
+    // Mostrar/ocultar paneles
+    const monitorElements = document.querySelectorAll('.sidebar, .streams-panel');
+    const predictionsPanel = document.getElementById('predictionsPanel');
+    
+    if (tab === 'monitor') {
+      monitorElements.forEach(el => el.style.display = '');
+      predictionsPanel.style.display = 'none';
+    } else if (tab === 'predictions') {
+      monitorElements.forEach(el => el.style.display = 'none');
+      predictionsPanel.style.display = 'block';
+    }
+  });
+});

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://www.hltv.org https://forg1.com">
   <title>Kick Stream Monitor</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -36,6 +36,18 @@
         </div>
       </div>
     </header>
+
+    <!-- Navegación de Tabs -->
+    <nav class="main-tabs">
+      <button class="tab-btn active" data-tab="monitor">
+        <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20"><path d="M2 5a2 2 0 012-2h12a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm6.5 1.5v7l5-3.5-5-3.5z"/></svg>
+        Monitor
+      </button>
+      <button class="tab-btn" data-tab="predictions">
+        <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+        Predicciones CS2
+      </button>
+    </nav>
 
     <!-- Main Content -->
     <main class="main-content">
@@ -196,9 +208,65 @@
           <div class="log-content" id="logContent"></div>
         </div>
       </section>
+
+      <!-- ============================================ -->
+      <!-- Panel de Predicciones CS2 -->
+      <!-- ============================================ -->
+      <section class="predictions-panel" id="predictionsPanel" style="display: none;">
+        
+        <!-- Controles -->
+        <div class="pred-controls card">
+          <div class="pred-controls-header">
+            <h2>🎯 Predicciones CS2</h2>
+            <p>Escaneá forg1 para ver las predicciones abiertas y recibir recomendaciones basadas en datos de HLTV.</p>
+          </div>
+
+          <div class="pred-buttons">
+            <button id="scanForg1Btn" class="btn-scan">
+              <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"/></svg>
+              Escanear Forg1
+            </button>
+            <button id="loginForg1Btn" class="btn-login">🔑 Login Forg1</button>
+          </div>
+
+          <!-- Manual -->
+          <details class="manual-section">
+            <summary>Análisis manual</summary>
+            <div class="manual-inputs">
+              <input type="text" id="team1Input" class="input" placeholder="Equipo 1 (ej: Falcons)">
+              <span class="manual-vs">vs</span>
+              <input type="text" id="team2Input" class="input" placeholder="Equipo 2 (ej: BetBoom)">
+              <button id="manualAnalyzeBtn" class="btn-manual">Analizar</button>
+            </div>
+            <div class="quick-picks">
+              <button class="quick-team" data-target="team1Input" data-team="Natus Vincere">NaVi</button>
+              <button class="quick-team" data-target="team1Input" data-team="FaZe">FaZe</button>
+              <button class="quick-team" data-target="team1Input" data-team="G2">G2</button>
+              <button class="quick-team" data-target="team1Input" data-team="Vitality">Vitality</button>
+              <button class="quick-team" data-target="team1Input" data-team="Spirit">Spirit</button>
+              <button class="quick-team" data-target="team2Input" data-team="MOUZ">MOUZ</button>
+              <button class="quick-team" data-target="team2Input" data-team="Liquid">Liquid</button>
+              <button class="quick-team" data-target="team2Input" data-team="Falcons">Falcons</button>
+              <button class="quick-team" data-target="team2Input" data-team="BetBoom">BetBoom</button>
+              <button class="quick-team" data-target="team2Input" data-team="Heroic">Heroic</button>
+            </div>
+          </details>
+        </div>
+
+        <!-- Resultados -->
+        <div class="pred-results card" id="analysisResults">
+          <div class="pred-empty">
+            <div class="pred-empty-icon">🔍</div>
+            <div class="pred-empty-text">Presioná "Escanear Forg1" para detectar predicciones abiertas</div>
+          </div>
+        </div>
+
+      </section>
+
     </main>
   </div>
 
   <script src="app.js"></script>
+  <script src="predictions.js"></script>
 </body>
 </html>

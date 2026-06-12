@@ -248,6 +248,116 @@ ipcMain.handle('get-monitoring-status', async () => {
   return { isMonitoring };
 });
 
+// ============================================================
+// Predicciones CS2 - HLTV Analysis + Forg1 Scraper
+// ============================================================
+
+const { analyzeMatchup } = require('./hltv');
+const { scrapeForg1Predictions, openForg1Login } = require('./forg1-scraper');
+
+ipcMain.handle('analyze-match', async (event, team1, team2) => {
+  try {
+    const analysis = await analyzeMatchup(team1, team2);
+    return { success: true, data: analysis };
+  } catch (error) {
+    console.error('Error analizando match:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('scrape-forg1-predictions', async () => {
+  try {
+    const data = await scrapeForg1Predictions();
+    return { success: true, data };
+  } catch (error) {
+    console.error('Error scrapeando forg1:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('forg1-login', async () => {
+  try {
+    openForg1Login();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Analiza automáticamente: scrapea forg1 + busca stats en HLTV
+ipcMain.handle('auto-analyze-predictions', async () => {
+  try {
+    // 1. Scrapear predicciones de forg1
+    const forg1Data = await scrapeForg1Predictions();
+    
+    if (!forg1Data.loggedIn) {
+      return { success: false, error: 'not-logged-in', data: forg1Data };
+    }
+
+    if (!forg1Data.predictions || forg1Data.predictions.length === 0) {
+      return { success: true, data: { predictions: [], message: 'No hay predicciones abiertas', raw: forg1Data.raw } };
+    }
+
+    // 2. Analizar cada predicción con HLTV
+    const analyzed = [];
+    for (const pred of forg1Data.predictions) {
+      if (pred.teams.length >= 2) {
+        const team1Name = pred.teams[0].name;
+        const team2Name = pred.teams[1].name;
+        
+        try {
+          const analysis = await analyzeMatchup(team1Name, team2Name);
+          analyzed.push({
+            ...pred,
+            analysis,
+            crowdVsData: getCrowdComparison(pred, analysis)
+          });
+        } catch (err) {
+          analyzed.push({
+            ...pred,
+            analysis: null,
+            error: err.message
+          });
+        }
+      }
+    }
+
+    return { success: true, data: { predictions: analyzed } };
+  } catch (error) {
+    console.error('Error en auto-analyze:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+function getCrowdComparison(prediction, analysis) {
+  if (!analysis || !analysis.team1 || !prediction.teams[0]) return null;
+
+  // Si no hay datos de HLTV, no tiene sentido comparar
+  if (analysis.dataQuality === 'none') return null;
+
+  const crowdT1 = parseInt(prediction.teams[0].percentage) || 50;
+  const crowdT2 = parseInt(prediction.teams[1]?.percentage) || (100 - crowdT1);
+  const dataT1 = analysis.team1.probability || 50;
+  const dataT2 = analysis.team2.probability || 50;
+
+  const diffT1 = dataT1 - crowdT1;
+
+  let verdict = '';
+  let hasValue = false;
+  if (Math.abs(diffT1) >= 12) {
+    hasValue = true;
+    if (diffT1 > 0) {
+      verdict = `🎯 VALUE en ${prediction.teams[0].name}: el crowd le da ${crowdT1}% pero los datos dicen ${dataT1}%. El multiplicador está inflado a tu favor.`;
+    } else {
+      verdict = `🎯 VALUE en ${prediction.teams[1].name}: el crowd le da ${crowdT2}% pero los datos dicen ${dataT2}%. El multiplicador está inflado a tu favor.`;
+    }
+  } else {
+    verdict = `El crowd y los datos coinciden bastante (diferencia ${Math.abs(diffT1)}%). No hay value escondido: apostá al favorito por seguridad.`;
+  }
+
+  return { crowdT1, crowdT2, dataT1, dataT2, diffT1, verdict, hasValue };
+}
+
 // Log de errores
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
