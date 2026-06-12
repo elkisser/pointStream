@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'">
+  <title>Kick Stream Monitor</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Background Animated -->
+  <div class="background-animation"></div>
+  
+  <!-- Container Principal -->
+  <div class="container">
+    
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">
+          <div class="logo-icon">K</div>
+          <div>
+            <h1>Kick <span class="accent">Monitor</span></h1>
+            <p class="subtitle">Detector automático de streams en vivo</p>
+          </div>
+        </div>
+        
+        <div class="header-status">
+          <div class="status-indicator" id="globalStatus">
+            <span class="status-dot"></span>
+            <span class="status-text">Detenido</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      
+      <!-- Sidebar de Configuración -->
+      <aside class="sidebar">
+        <div class="card">
+          <h2 class="card-title">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 01-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z"/>
+            </svg>
+            Configuración
+          </h2>
+          
+          <!-- Agregar Streamer -->
+          <div class="form-group">
+            <label for="streamerInput">Streamers a monitorear</label>
+            <div class="input-with-button">
+              <input 
+                type="text" 
+                id="streamerInput" 
+                placeholder="Nombre del streamer..."
+                class="input"
+              >
+              <button id="addStreamerBtn" class="btn btn-primary btn-sm">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"/>
+                </svg>
+                Agregar
+              </button>
+            </div>
+          </div>
+
+          <!-- Lista de Streamers -->
+          <div class="streamers-list" id="streamersList"></div>
+
+          <!-- Intervalo -->
+          <div class="form-group">
+            <label for="intervalSlider">
+              Intervalo de verificación
+              <span class="label-value" id="intervalValue">60s</span>
+            </label>
+            <input 
+              type="range" 
+              id="intervalSlider" 
+              min="30" 
+              max="300" 
+              value="60" 
+              class="slider"
+            >
+          </div>
+
+          <!-- Opciones -->
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoOpenCheck" checked>
+              <span class="checkbox-custom"></span>
+              <span>Abrir automáticamente en Brave</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="notificationsCheck" checked>
+              <span class="checkbox-custom"></span>
+              <span>Notificaciones de escritorio</span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="minimizeCheck">
+              <span class="checkbox-custom"></span>
+              <span>Minimizar al abrir stream</span>
+            </label>
+          </div>
+
+          <!-- Botón Principal -->
+          <button id="toggleMonitorBtn" class="btn btn-success btn-large">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M6 4l8 6-8 6V4z"/>
+            </svg>
+            Iniciar Monitor
+          </button>
+        </div>
+
+        <!-- Estadísticas -->
+        <div class="card stats-card">
+          <h2 class="card-title">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zm6-4a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zm6-3a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/>
+            </svg>
+            Estadísticas
+          </h2>
+          
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-value" id="statTime">0m</div>
+              <div class="stat-label">Tiempo monitoreando</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value" id="statStreams">0</div>
+              <div class="stat-label">Streams detectados</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value" id="statLive">0</div>
+              <div class="stat-label">En vivo ahora</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Panel de Streams -->
+      <section class="streams-panel">
+
+        <!-- Encabezado del panel -->
+        <div class="panel-heading">
+          <h2>
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20" style="color: var(--kick-green);">
+              <path d="M2 5a2 2 0 012-2h12a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm6.5 1.5v7l5-3.5-5-3.5z"/>
+            </svg>
+            Streams
+          </h2>
+          <span class="live-count" id="liveCountBadge">0 en vivo</span>
+        </div>
+
+        <!-- Estado Vacío -->
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">
+            <svg width="80" height="80" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z"/>
+            </svg>
+          </div>
+          <h3>No hay streamers agregados</h3>
+          <p>Agrega streamers para comenzar a monitorear</p>
+        </div>
+
+        <!-- Grid de Tarjetas de Streamers -->
+        <div class="streams-grid" id="streamsGrid"></div>
+
+        <!-- Log de Actividades -->
+        <div class="card log-card">
+          <div class="log-header">
+            <h2 class="card-title">
+              <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
+                <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z"/>
+              </svg>
+              Log de Actividades
+            </h2>
+            <button id="clearLogBtn" class="btn btn-ghost btn-sm">
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"/>
+              </svg>
+              Limpiar
+            </button>
+          </div>
+          <div class="log-content" id="logContent"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
