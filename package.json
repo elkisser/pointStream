@@ -1,13 +1,15 @@
 {
-  "name": "kick-stream-monitor",
+  "name": "pointstream",
   "version": "1.0.0",
-  "description": "Monitor automático de streams de Kick.com con notificaciones y apertura automática en Brave",
+  "description": "Monitor de streams de Kick.com y predicciones de CS2 (Forg1 + HLTV) con notificaciones de escritorio",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "icon": "node build/generate-icon.js",
-    "dist": "npm run icon && electron-builder",
+    "art": "node build/generate-installer-art.js",
+    "screenshots": "electron build/capture-screenshots.js",
+    "dist": "npm run icon && npm run art && electron-builder",
     "pack": "npm run icon && electron-builder --dir"
   },
   "keywords": [
@@ -18,7 +20,7 @@
     "live",
     "streaming"
   ],
-  "author": "",
+  "author": "elkisser",
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.0.0",
@@ -28,8 +30,8 @@
     "axios": "^1.17.0"
   },
   "build": {
-    "appId": "com.kickmonitor.app",
-    "productName": "Kick Stream Monitor",
+    "appId": "com.pointstream.app",
+    "productName": "pointStream",
     "copyright": "Copyright © 2026",
     "directories": {
       "output": "dist",
@@ -49,7 +51,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "KickStreamMonitor-Setup-${version}.${ext}"
+      "artifactName": "pointStream-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -57,11 +59,16 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Kick Stream Monitor",
+      "shortcutName": "pointStream",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
-      "deleteAppDataOnUninstall": true
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "deleteAppDataOnUninstall": true,
+      "runAfterFinish": true,
+      "menuCategory": false
     }
   }
 }
