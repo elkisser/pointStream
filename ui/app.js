@@ -9,7 +9,8 @@ const state = {
     interval: 60,
     autoOpen: true,
     notifications: true,
-    minimize: false
+    minimize: false,
+    platform: 'kick' // 'kick' | 'twitch'
   }
 };
 
@@ -32,7 +33,8 @@ const elements = {
   statTime: document.getElementById('statTime'),
   statStreams: document.getElementById('statStreams'),
   statLive: document.getElementById('statLive'),
-  liveCountBadge: document.getElementById('liveCountBadge')
+  liveCountBadge: document.getElementById('liveCountBadge'),
+  platformSwitch: document.getElementById('platformSwitch')
 };
 
 // ============================================================
@@ -41,6 +43,8 @@ const elements = {
 
 function init() {
   setupEventListeners();
+  setupWindowControls();
+  applyPlatformTheme();
   renderStreamersList();
   updateUI();
   logMessage('Aplicación iniciada', 'info');
@@ -82,6 +86,13 @@ function setupEventListeners() {
   // Toggle monitor
   elements.toggleMonitorBtn.addEventListener('click', toggleMonitoring);
   
+  // Switch de plataforma (Kick / Twitch)
+  if (elements.platformSwitch) {
+    elements.platformSwitch.querySelectorAll('.platform-btn').forEach(btn => {
+      btn.addEventListener('click', () => switchPlatform(btn.dataset.platform));
+    });
+  }
+  
   // Clear log
   elements.clearLogBtn.addEventListener('click', clearLog);
   
@@ -89,6 +100,84 @@ function setupEventListeners() {
   window.kickAPI.onStreamUpdate((data) => {
     handleStreamUpdate(data);
   });
+}
+
+// ============================================================
+// Controles de ventana (barra de título personalizada)
+// ============================================================
+
+function setupWindowControls() {
+  if (!window.windowAPI) return;
+
+  const titlebar = document.getElementById('titlebar');
+  const minBtn = document.getElementById('winMin');
+  const maxBtn = document.getElementById('winMax');
+  const closeBtn = document.getElementById('winClose');
+
+  if (minBtn) minBtn.addEventListener('click', () => window.windowAPI.minimize());
+  if (closeBtn) closeBtn.addEventListener('click', () => window.windowAPI.close());
+  if (maxBtn) maxBtn.addEventListener('click', () => window.windowAPI.maximize());
+
+  // Doble click en la barra para maximizar/restaurar
+  const dragZone = titlebar ? titlebar.querySelector('.titlebar-drag') : null;
+  if (dragZone) {
+    dragZone.addEventListener('dblclick', () => window.windowAPI.maximize());
+  }
+
+  // Reflejar el estado maximizado en el ícono del botón
+  const reflectState = (maximized) => {
+    if (!titlebar) return;
+    titlebar.classList.toggle('maximized', !!maximized);
+    if (maxBtn) maxBtn.title = maximized ? 'Restaurar' : 'Maximizar';
+  };
+
+  window.windowAPI.onStateChange((data) => reflectState(data.maximized));
+  window.windowAPI.isMaximized().then(reflectState).catch(() => {});
+}
+
+// ============================================================
+// Plataforma (Kick / Twitch)
+// ============================================================
+
+const PLATFORM_LABELS = { kick: 'Kick', twitch: 'Twitch' };
+
+function applyPlatformTheme() {
+  document.body.setAttribute('data-platform', state.config.platform);
+
+  // Marcar el botón activo
+  if (elements.platformSwitch) {
+    elements.platformSwitch.querySelectorAll('.platform-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.platform === state.config.platform);
+    });
+  }
+
+  // Actualizar subtítulo del header con la plataforma activa
+  const subtitle = document.querySelector('.header .subtitle');
+  if (subtitle) {
+    subtitle.textContent = `Streams en vivo · ${PLATFORM_LABELS[state.config.platform]}`;
+  }
+}
+
+function switchPlatform(platform) {
+  if (!platform || platform === state.config.platform) return;
+
+  // No permitir cambiar mientras se monitorea (evita estados mezclados)
+  if (state.isMonitoring) {
+    logMessage('⚠️ Detené el monitor antes de cambiar de plataforma', 'warning');
+    return;
+  }
+
+  state.config.platform = platform;
+  applyPlatformTheme();
+
+  // Resetear estado de los streams: los mismos nombres se revisarán
+  // en la nueva plataforma desde cero.
+  state.streams.forEach((_, name) => state.streams.set(name, { isLive: false }));
+  renderStreamersList();
+  renderStreamsGrid();
+  updateStats();
+
+  logMessage(`🎨 Plataforma cambiada a ${PLATFORM_LABELS[platform]}`, 'info');
 }
 
 // ============================================================
@@ -209,7 +298,8 @@ async function startMonitoring() {
     streamers: state.streamers,
     interval: state.config.interval,
     autoOpen: state.config.autoOpen,
-    notifications: state.config.notifications
+    notifications: state.config.notifications,
+    platform: state.config.platform
   });
   
   if (result.success) {
@@ -413,8 +503,9 @@ function createStreamCard(name, stream, featured = false) {
 }
 
 async function openStream(streamerName) {
-  logMessage(`🌐 Abriendo stream de ${streamerName}...`, 'info');
-  await window.kickAPI.openStream(streamerName);
+  const platformLabel = PLATFORM_LABELS[state.config.platform];
+  logMessage(`🌐 Abriendo stream de ${streamerName} en ${platformLabel}...`, 'info');
+  await window.kickAPI.openStream(streamerName, state.config.platform);
 }
 
 function updateUI() {
@@ -526,7 +617,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
       predictionsPanel.style.display = 'none';
     } else if (tab === 'predictions') {
       monitorElements.forEach(el => el.style.display = 'none');
-      predictionsPanel.style.display = 'block';
+      predictionsPanel.style.display = 'flex';
     }
   });
 });

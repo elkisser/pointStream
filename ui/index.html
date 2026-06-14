@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://www.hltv.org https://forg1.com">
-  <title>Kick Stream Monitor</title>
+  <title>pointStream</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,14 +17,34 @@
   <!-- Container Principal -->
   <div class="container">
     
+    <!-- Barra de título personalizada -->
+    <div class="titlebar" id="titlebar">
+      <div class="titlebar-drag">
+        <span class="titlebar-dot"></span>
+        <span class="titlebar-title">point<span class="accent">Stream</span></span>
+      </div>
+      <div class="window-controls">
+        <button class="win-btn win-min" id="winMin" title="Minimizar" aria-label="Minimizar">
+          <svg width="11" height="11" viewBox="0 0 11 11"><rect x="1" y="5" width="9" height="1.2"/></svg>
+        </button>
+        <button class="win-btn win-max" id="winMax" title="Maximizar" aria-label="Maximizar">
+          <svg class="ico-max" width="11" height="11" viewBox="0 0 11 11"><rect x="1.5" y="1.5" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+          <svg class="ico-restore" width="11" height="11" viewBox="0 0 11 11"><rect x="1.3" y="3.2" width="6.5" height="6.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M3.7 3.2V1.5h6.5v6.5H8.5" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+        </button>
+        <button class="win-btn win-close" id="winClose" title="Cerrar" aria-label="Cerrar">
+          <svg width="11" height="11" viewBox="0 0 11 11"><path d="M1.5 1.5l8 8M9.5 1.5l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+    
     <!-- Header -->
     <header class="header">
       <div class="header-content">
         <div class="logo">
-          <div class="logo-icon">K</div>
+          <div class="logo-icon">P</div>
           <div>
-            <h1>Kick <span class="accent">Monitor</span></h1>
-            <p class="subtitle">Detector automático de streams en vivo</p>
+            <h1>point<span class="accent">Stream</span></h1>
+            <p class="subtitle">Streams en vivo y predicciones CS2</p>
           </div>
         </div>
         
@@ -61,6 +81,18 @@
             </svg>
             Configuración
           </h2>
+          
+          <!-- Switch de plataforma -->
+          <div class="platform-switch" id="platformSwitch">
+            <button class="platform-btn active" data-platform="kick">
+              <svg viewBox="0 0 933 893" fill="currentColor"><path d="M0 0h266.667v177.778H355.6V88.889h88.889V0H711.11v266.667h-88.889v88.889H533.333v88.888h88.889v88.889h88.889v266.667H444.489v-88.889H355.6v-88.889h-88.933V893H0V0Z"/></svg>
+              Kick
+            </button>
+            <button class="platform-btn" data-platform="twitch">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/></svg>
+              Twitch
+            </button>
+          </div>
           
           <!-- Agregar Streamer -->
           <div class="form-group">
@@ -226,7 +258,12 @@
               <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"/></svg>
               Escanear Forg1
             </button>
+            <button id="monitorPredBtn" class="btn-monitor">
+              <span class="pred-mon-dot"></span>
+              <span class="pred-mon-label">Monitorear</span>
+            </button>
             <button id="loginForg1Btn" class="btn-login">🔑 Login Forg1</button>
+            <button id="connectHltvBtn" class="btn-login">🛡️ Conectar HLTV</button>
           </div>
 
           <!-- Manual -->
@@ -254,10 +291,10 @@
         </div>
 
         <!-- Resultados -->
-        <div class="pred-results card" id="analysisResults">
+        <div class="pred-results" id="analysisResults">
           <div class="pred-empty">
             <div class="pred-empty-icon">🔍</div>
-            <div class="pred-empty-text">Presioná "Escanear Forg1" para detectar predicciones abiertas</div>
+            <div class="pred-empty-text">Presioná "Escanear Forg1" para detectar predicciones abiertas, o "Monitorear" para recibir un aviso cuando se abra una nueva.</div>
           </div>
         </div>
 
