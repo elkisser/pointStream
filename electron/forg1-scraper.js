@@ -37,127 +37,119 @@ async function scrapeForg1Predictions() {
                 return { ready: true, loggedIn: false, raw: body.substring(0, 500) };
               }
 
-              // Buscar predicciones por DOM real, no por texto
-              // En forg1, las predicciones tienen cards con opciones
-              // Intentar buscar por estructura DOM
-              const predictions = [];
-              
-              // Buscar todos los elementos que parecen predicciones
-              // Basándome en la screenshot: hay un título tipo "Quien gana el 1er MAPA?"
-              // y dos opciones con nombre + porcentaje
-              
-              // Estrategia: buscar headings o divs grandes que contengan "gana" o "MAPA" o "predicci"
-              const allElements = document.querySelectorAll('h1, h2, h3, h4, h5, [class*="title"], [class*="question"], [class*="heading"]');
-              
-              let questionEl = null;
-              allElements.forEach(el => {
-                const t = el.textContent.trim();
-                if (t.match(/gana|MAPA|ganador|predicci/i) && t.length < 80) {
-                  questionEl = el;
-                }
-              });
+              // --- Validación de nombre de equipo ---
+              // Rechaza timestamps ("HACE 1H", "AHORA", "EN 5 MIN"), números,
+              // y palabras de la UI que NO son equipos.
+              function isTimeToken(s) {
+                const u = s.toUpperCase().trim();
+                return /HACE\\s|AHORA|\\bAYER\\b|\\bHOY\\b|^EN\\s+\\d|\\d+\\s*(H|HS|HORA|HORAS|MIN|MINUTO|MINUTOS|M|D|D[IÍ]A|D[IÍ]AS|SEG|SEGUNDOS)\\b|^\\d{1,2}:\\d{2}$/.test(u);
+              }
+              const UI_WORDS = ['POOL','JUGADORES','TU JUGADA','SI GANÁS','SI GANAS','PTS','PREDICCIÓN',
+                'PREDICCION','LIVE','EN VIVO','EVOLUCIÓN','EVOLUCION','POR OPCIÓN','POR OPCION','CIERRA',
+                'TU ELECCIÓN','TU ELECCION','COMUNIDAD','INICIO','EXTENSIÓN','EXTENSION','PREDICCIONES',
+                'TIENDA','SORTEOS','CÓDIGOS','CODIGOS','LEADERBOARD','BOT 1XBET','MI PERFIL','TU BALANCE',
+                'GANÁS','GANAS','APOSTAR','APUESTA','TOTAL','VS','EMPATE','RESULTADO','MAPA','MAPAS'];
 
-              // Buscar por texto completo como fallback
+              // Equipos conocidos (whitelist para evitar falsos positivos)
+              const KNOWN_TEAMS_LOWER = new Set(['vitality', 'navi', 'faze', 'g2', 'spirit', 'mouz', 'liquid', 'heroic', 
+                'astralis', 'ence', 'fnatic', 'falcons', 'monte', 'mibr', '9z', 'pain', 'mk', 'tn', 'eternal fire',
+                'complexity', 'nip', 'apeks', '3dmax', 'saw', 'bnj', 'big', 'betboom', 'sangal', 'fluxo', 'forze',
+                'legacy', 'sharks', 'bad news', 'chicken fighters', 'aurora', 'tyloo', 'renegades', 'order',
+                'cloud9', 'c9', 'wildcard', 'flyquest', 'imperial', 'gamerlegion', 'bnj', 'sprout', 'anonymous',
+                'sashi esports', 'pera esports', 'dizzy', 'sence', 'lions', 'furia', 'rebels', 'winstrike', 'entropiq']);
+
+              function validTeam(name) {
+                if (!name) return false;
+                const t = name.trim();
+                if (t.length < 2 || t.length > 22) return false;
+                if (!/^[A-Za-z0-9]/.test(t)) return false;
+                if (!/[A-Za-z]/.test(t)) return false;
+                if (/^[\\d.,%:+\\-]+$/.test(t)) return false;
+                if (isTimeToken(t)) return false;
+                const u = t.toUpperCase();
+                for (const w of UI_WORDS) { if (u === w || u.includes(w)) return false; }
+                // NUEVO: si no está en la lista de equipos conocidos, rechazar
+                // (evita xplay.gg, el_kast1, etc que no son equipos reales)
+                if (!KNOWN_TEAMS_LOWER.has(t.toLowerCase())) return false;
+                return true;
+              }
+
+              // ============================================================
+              // Detección: PRIMERO los equipos (opción + %), DESPUÉS la pregunta.
+              // Así evitamos confundir la pregunta con headings de la UI como
+              // "¿CÓMO FUNCIONA?".
+              // ============================================================
+              const predictions = [];
+
+              const QKEYS = /gana|ganar|ganador|gane|hace|mata|kill|mapa|\\bmap\\b|stage|ronda|round|pistol|clutch|mvp|primer|primera|gan[aá]|m[aá]s\\s|cu[aá]nt|cu[aá]l|qui[eé]n/i;
+              const HELP_WORDS = ['CÓMO FUNCIONA','COMO FUNCIONA','¿CÓMO','¿COMO','QUÉ ES','QUE ES','AYUDA','FAQ',
+                'PREGUNTAS','REGLAS','TÉRMINOS','TERMINOS','SOPORTE','TUTORIAL','CONTACTO','ACERCA',
+                'POLÍTICA','POLITICA','PRIVACIDAD','NOVEDADES','HISTORIAL'];
+
               const lines = body.split('\\n').map(l => l.trim()).filter(l => l.length > 0);
-              
-              // Encontrar la pregunta de predicción
-              let questionIdx = -1;
-              let question = '';
+
+              function isPct(s) { return /^\\d{1,3}\\s*%?$/.test(s || ''); }
+
+              // 1) Opciones: línea = equipo válido seguido (1 o 2 líneas) por un %
+              const hits = [];
               for (let i = 0; i < lines.length; i++) {
-                if (lines[i].match(/quien gana|quién gana|ganador|MAPA/i) && lines[i].length < 80) {
-                  question = lines[i];
-                  questionIdx = i;
-                  break;
+                if (!validTeam(lines[i])) continue;
+                const n1 = lines[i + 1] || '', n2 = lines[i + 2] || '';
+                let pct = null;
+                if (isPct(n1)) pct = parseInt(n1);
+                else if (isPct(n2)) pct = parseInt(n2);
+                if (pct != null && !hits.find(h => h.name === lines[i])) {
+                  hits.push({ name: lines[i], percentage: pct + '%', idx: i });
                 }
               }
 
-              if (questionIdx === -1) {
-                // No hay predicción con pregunta visible
+              if (hits.length < 2) {
+                // No hay una predicción con dos opciones claras
                 return { ready: true, loggedIn: true, predictions: [], raw: body.substring(0, 2000) };
               }
 
-              // Buscar el tiempo de cierre (CIERRA · XX:XX)
+              const teams = [hits[0], hits[1]].map(h => ({ name: h.name, percentage: h.percentage }));
+              const firstIdx = hits[0].idx;
+
+              // 2) Pregunta: el heading más cercano ARRIBA de las opciones,
+              //    descartando headings de ayuda/UI y nombres de equipo.
+              function badHeading(l) {
+                if (!l || l.length < 5 || l.length > 90) return true;
+                if (/^[\\d.,%:+\\-]/.test(l)) return true;
+                const u = l.toUpperCase();
+                if (HELP_WORDS.some(w => u.includes(w))) return true;
+                if (UI_WORDS.some(w => u.includes(w))) return true;
+                if (validTeam(l)) return true;
+                return false;
+              }
+              let question = '';
+              for (let i = firstIdx - 1; i >= Math.max(0, firstIdx - 14); i--) {
+                if (badHeading(lines[i])) continue;
+                if (lines[i].endsWith('?') || QKEYS.test(lines[i])) { question = lines[i]; break; }
+              }
+              if (!question) {
+                for (let i = firstIdx - 1; i >= Math.max(0, firstIdx - 14); i--) {
+                  if (badHeading(lines[i])) continue;
+                  question = lines[i]; break;
+                }
+              }
+              if (!question) question = 'Predicción abierta';
+
+              // 3) Cierre: "CIERRA" cerca de las opciones (cuenta regresiva mm:ss)
               let closesAt = '';
-              for (let i = Math.max(0, questionIdx - 5); i < Math.min(lines.length, questionIdx + 3); i++) {
-                const m = lines[i].match(/(\\d{1,2}:\\d{2})/);
-                if (m) { closesAt = m[1]; break; }
-              }
-
-              // Buscar los equipos: vienen DESPUÉS de la pregunta
-              // El patrón en forg1 es: NombreEquipo luego XX% (en líneas separadas)
-              // Pero hay ruido (POOL, JUGADORES, PTS, etc)
-              
-              const teams = [];
-              const skipWords = ['POOL', 'JUGADORES', 'TU JUGADA', 'SI GANÁS', 'PTS', 'PREDICCIÓN', 
-                                 'LIVE', 'EVOLUCIÓN', 'POR OPCIÓN', 'CIERRA', question,
-                                 'pts', 'TU ELECCIÓN', 'COMUNIDAD', 'INICIO', 'EXTENSIÓN',
-                                 'PREDICCIONES', 'TIENDA', 'SORTEOS', 'CÓDIGOS', 'LEADERBOARD',
-                                 'BOT 1XBET', 'MI PERFIL', 'TU BALANCE'];
-              
-              // Buscar desde después de la pregunta
-              for (let i = questionIdx + 1; i < Math.min(lines.length, questionIdx + 40); i++) {
-                const line = lines[i];
-                
-                // Saltar líneas que son números, porcentajes, timestamps, o palabras clave
-                if (line.match(/^[\\d.,]+$/) || 
-                    line.match(/^\\d+%$/) || 
-                    line.match(/^\\d+:\\d+$/) ||
-                    line.match(/^\\d+[.,]\\d+/) ||
-                    line.match(/^[+]/) ||
-                    line.length > 25 ||
-                    line.length < 2) continue;
-                
-                // Saltar keywords
-                let isSkip = false;
-                for (const sw of skipWords) {
-                  if (line.toUpperCase().includes(sw.toUpperCase())) { isSkip = true; break; }
-                }
-                if (isSkip) continue;
-                
-                // Verificar si la siguiente línea es un porcentaje (indica que esta línea es un equipo)
-                const nextLine = lines[i + 1] || '';
-                const nextNextLine = lines[i + 2] || '';
-                
-                if (nextLine.match(/^\\d{1,3}\\s*[%]?$/) || nextNextLine.match(/^\\d{1,3}\\s*[%]?$/)) {
-                  const pctLine = nextLine.match(/^\\d{1,3}/) ? nextLine : nextNextLine;
-                  const pct = parseInt(pctLine) || 0;
-                  
-                  // Verificar que no es un duplicado y que parece un nombre de equipo
-                  if (!teams.find(t => t.name === line) && line.match(/^[A-Za-z]/) && teams.length < 2) {
-                    teams.push({ name: line, percentage: pct + '%' });
+              for (let i = Math.max(0, firstIdx - 20); i < Math.min(lines.length, firstIdx + 20); i++) {
+                if (/CIERRA/i.test(lines[i])) {
+                  for (let j = i; j < Math.min(lines.length, i + 3); j++) {
+                    const m = lines[j].match(/(\\d{1,2}:\\d{2}(?::\\d{2})?)/);
+                    if (m) { closesAt = m[1]; break; }
                   }
-                }
-              }
-
-              // Si no encontramos por el método de siguiente-línea-es-%, buscar otro patrón
-              if (teams.length < 2) {
-                // Buscar dos palabras que parezcan nombres de equipo (capitalizadas, cortas)
-                // seguidas eventualmente de un número
-                const teamCandidates = [];
-                for (let i = questionIdx + 1; i < Math.min(lines.length, questionIdx + 30); i++) {
-                  const line = lines[i];
-                  if (line.match(/^[A-Z][a-zA-Z0-9 ]{1,20}$/) && !skipWords.some(sw => line.toUpperCase().includes(sw.toUpperCase()))) {
-                    teamCandidates.push({ name: line, idx: i });
-                  }
-                }
-                
-                // Los primeros 2 candidatos son probablemente los equipos
-                for (const cand of teamCandidates.slice(0, 2)) {
-                  // Buscar % cerca
-                  let pct = '?';
-                  for (let j = cand.idx + 1; j < Math.min(lines.length, cand.idx + 3); j++) {
-                    const m = lines[j].match(/^(\\d{1,3})\\s*%?$/);
-                    if (m) { pct = m[1] + '%'; break; }
-                  }
-                  if (!teams.find(t => t.name === cand.name)) {
-                    teams.push({ name: cand.name, percentage: pct });
-                  }
+                  if (closesAt) break;
                 }
               }
 
               // Pool y jugadores
               let pool = '', players = '';
-              for (let i = questionIdx; i < Math.min(lines.length, questionIdx + 25); i++) {
+              for (let i = firstIdx; i < Math.min(lines.length, firstIdx + 25); i++) {
                 const poolM = lines[i].match(/^([\\d.,]+)\\s*pts$/);
                 if (poolM && !pool) pool = poolM[1];
                 
@@ -166,8 +158,10 @@ async function scrapeForg1Predictions() {
                 }
               }
 
-              if (teams.length >= 2) {
-                predictions.push({ question, closesAt, teams: teams.slice(0, 2), pool, players, status: 'open' });
+              // Solo emitir si hay DOS equipos válidos de verdad
+              const validTeams = teams.filter(t => validTeam(t.name)).slice(0, 2);
+              if (validTeams.length >= 2) {
+                predictions.push({ question, closesAt, teams: validTeams, pool, players, status: 'open' });
               }
 
               return { ready: true, loggedIn: true, predictions, raw: body.substring(0, 2000) };
