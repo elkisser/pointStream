@@ -3,11 +3,14 @@
 // ============================================================
 
 let predBusy = false;
+let monitoring = false;
 
 function initPredictions() {
   document.getElementById('scanForg1Btn').addEventListener('click', doScan);
   document.getElementById('loginForg1Btn').addEventListener('click', doLogin);
+  document.getElementById('connectHltvBtn').addEventListener('click', () => window.predictionsAPI.connectHLTV());
   document.getElementById('manualAnalyzeBtn').addEventListener('click', doManual);
+  document.getElementById('monitorPredBtn').addEventListener('click', toggleMonitoring);
 
   document.getElementById('team1Input').addEventListener('keypress', e => {
     if (e.key === 'Enter') document.getElementById('team2Input').focus();
@@ -21,7 +24,61 @@ function initPredictions() {
       document.getElementById(btn.dataset.target).value = btn.dataset.team;
     });
   });
+
+  // Escuchar avisos del monitor de predicciones
+  window.predictionsAPI.onUpdate(handleMonitorUpdate);
 }
+
+// --- Monitoreo de predicciones ---
+async function toggleMonitoring() {
+  if (monitoring) {
+    await window.predictionsAPI.stopMonitoring();
+    setMonitoring(false);
+    return;
+  }
+
+  const btn = document.getElementById('monitorPredBtn');
+  btn.disabled = true;
+  const res = await window.predictionsAPI.startMonitoring({ interval: 60 });
+  btn.disabled = false;
+
+  if (res.success) {
+    setMonitoring(true);
+    if (predBusy) return;
+    // Mostrar lo que haya ahora mismo
+    doScan();
+  } else if (res.error === 'not-logged-in') {
+    setMonitoring(false);
+    setResults(msgHTML('warning', 'No estás logueado en Forg1', 'Tocá "Login Forg1", iniciá sesión, cerrá esa ventana y volvé a activar el monitoreo.'));
+  } else {
+    setMonitoring(false);
+    setResults(msgHTML('error', 'No se pudo iniciar el monitoreo', res.message || res.error || ''));
+  }
+}
+
+function setMonitoring(on) {
+  monitoring = on;
+  const btn = document.getElementById('monitorPredBtn');
+  btn.classList.toggle('active', on);
+  btn.querySelector('.pred-mon-label').textContent = on ? 'Monitoreando' : 'Monitorear';
+}
+
+// Llega cuando el monitor del backend detecta cambios
+function handleMonitorUpdate(data) {
+  if (!data) return;
+
+  if (data.loggedIn === false) {
+    setMonitoring(false);
+    setResults(msgHTML('warning', 'Sesión de Forg1 cerrada', 'Volvé a loguearte para seguir monitoreando.'));
+    return;
+  }
+
+  // Si apareció una predicción nueva, refrescar el análisis completo
+  if (data.hasNew && !predBusy) {
+    doScan();
+  }
+}
+
 
 // --- Scan Forg1 ---
 async function doScan() {
@@ -41,11 +98,11 @@ async function doScan() {
       return;
     }
 
-    const { predictions, raw, message } = res.data;
+    const { predictions } = res.data;
     if (!predictions || predictions.length === 0) {
-      let extra = '';
-      if (raw) extra = `<details class="raw-details"><summary>Ver lo que leí de la página</summary><pre>${esc(raw.substring(0, 1500))}</pre></details>`;
-      setResults(msgHTML('warning', 'No hay predicciones abiertas', message || 'Esperá a que abra una nueva y volvé a escanear.') + extra);
+      setResults(msgHTML('info', 'No hay predicciones activas', monitoring
+        ? 'Te avisaré apenas se abra una nueva predicción en Forg1.'
+        : 'En este momento no hay ninguna predicción abierta en Forg1. Activá "Monitorear" para recibir un aviso cuando se abra una nueva.'));
       return;
     }
 
@@ -75,8 +132,7 @@ async function doManual() {
       renderCards([{
         question: `${t1} vs ${t2}`,
         teams: [{ name: res.data.team1.name, percentage: '—' }, { name: res.data.team2.name, percentage: '—' }],
-        analysis: res.data,
-        crowdVsData: null
+        analysis: res.data
       }]);
     } else {
       setResults(msgHTML('error', 'Algo falló', res.error));
@@ -92,6 +148,8 @@ async function doManual() {
 async function doLogin() { await window.predictionsAPI.openForg1Login(); }
 
 // --- Render ---
+let countdownInterval = null;
+
 function renderCards(predictions) {
   let html = `<div class="pred-scan-header">
     <span class="pred-scan-count">${predictions.length} predicción${predictions.length > 1 ? 'es' : ''}</span>
@@ -103,37 +161,93 @@ function renderCards(predictions) {
   });
 
   setResults(html);
+  startCountdowns();
+}
+
+// Cuenta regresiva en vivo (actualiza los segundos cada segundo)
+function parseClock(str) {
+  if (!str) return null;
+  const parts = String(str).split(':').map(x => parseInt(x, 10));
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return null;
+}
+
+function fmtClock(total) {
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function startCountdowns() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  const tick = () => {
+    const els = document.querySelectorAll('[data-countdown]');
+    if (!els.length) { clearInterval(countdownInterval); countdownInterval = null; return; }
+    els.forEach(el => {
+      let s = parseInt(el.getAttribute('data-countdown'), 10);
+      if (isNaN(s)) return;
+      s = Math.max(0, s - 1);
+      el.setAttribute('data-countdown', s);
+      if (s <= 0) {
+        el.textContent = 'Cerrada';
+        el.classList.add('closed');
+      } else {
+        el.textContent = `cierra en ${fmtClock(s)}`;
+      }
+    });
+  };
+  countdownInterval = setInterval(tick, 1000);
 }
 
 function renderOneCard(pred, i) {
   const a = pred.analysis;
-  const c = pred.crowdVsData;
   const t1Name = pred.teams[0]?.name || a?.team1?.name || 'Equipo 1';
   const t2Name = pred.teams[1]?.name || a?.team2?.name || 'Equipo 2';
 
   let html = `<div class="pred-card">`;
 
-  // Header
+  // Header: la pregunta (de qué es la predicción) + cuenta regresiva en vivo
+  const secs = parseClock(pred.closesAt);
+  const timerHtml = secs != null
+    ? `<span class="pred-card-timer" data-countdown="${secs}">cierra en ${fmtClock(secs)}</span>`
+    : (pred.closesAt ? `<span class="pred-card-timer">cierra ${esc(pred.closesAt)}</span>` : '');
+
   html += `<div class="pred-card-head">
     <span class="pred-card-q">${esc(pred.question || 'Predicción ' + (i + 1))}</span>
-    ${pred.closesAt ? `<span class="pred-card-timer">cierra ${pred.closesAt}</span>` : ''}
+    ${timerHtml}
   </div>`;
 
-  // VERDICT primero (lo más importante)
-  if (a && a.verdict) {
+  const hasData = a && a.dataQuality && a.dataQuality !== 'none';
+
+  // RECOMENDACIÓN primero (lo más importante)
+  if (hasData && a.recommendation) {
     const lvl = a.verdictLevel || 'gray';
     const icon = lvl === 'green' ? '✅' : lvl === 'yellow' ? '⚠️' : lvl === 'red' ? '🛑' : 'ℹ️';
-    const pick = a.recommendation && lvl !== 'gray' ? `<div class="pred-pick">Apostar a <strong>${esc(a.recommendation)}</strong></div>` : '';
+    const pick = lvl !== 'gray'
+      ? `<div class="pred-pick">Apostar a <strong>${esc(a.recommendation)}</strong> · ${a.confidence}%</div>`
+      : '';
     html += `<div class="pred-verdict ${lvl}">
       <div class="pred-verdict-icon">${icon}</div>
       <div class="pred-verdict-body">
         ${pick}
-        <div class="pred-verdict-text">${esc(a.verdict)}</div>
+        <div class="pred-verdict-text">${esc(a.verdict || '')}</div>
+      </div>
+    </div>`;
+  } else {
+    // Sin datos de HLTV: ser claro, no inventar
+    html += `<div class="pred-verdict gray">
+      <div class="pred-verdict-icon">ℹ️</div>
+      <div class="pred-verdict-body">
+        <div class="pred-verdict-text">No pude traer estadísticas de HLTV para estos equipos. Tocá <strong>"Conectar HLTV"</strong> una vez, pasá la verificación de Cloudflare, cerrá esa ventana y volvé a escanear. Mientras tanto, guiate por el porcentaje de la comunidad.</div>
       </div>
     </div>`;
   }
 
-  // Comparador grande: Forg1 crowd vs HLTV
+  // Probabilidad calculada con estadísticas
   const p1 = a?.team1?.probability ?? null;
   const p2 = a?.team2?.probability ?? null;
   const crowd1 = pred.teams[0]?.percentage || '—';
@@ -143,21 +257,21 @@ function renderOneCard(pred, i) {
     <div class="pred-vs-team">
       <div class="pred-vs-name">${esc(t1Name)}</div>
       <div class="pred-vs-bars">
-        <div class="pred-vs-stat"><span class="lbl">Forg1</span><span class="val crowd">${crowd1}</span></div>
-        <div class="pred-vs-stat"><span class="lbl">HLTV</span><span class="val hltv">${p1 != null ? p1 + '%' : '—'}</span></div>
+        <div class="pred-vs-stat"><span class="lbl">Comunidad</span><span class="val crowd">${esc(crowd1)}</span></div>
+        <div class="pred-vs-stat"><span class="lbl">Stats</span><span class="val hltv">${p1 != null ? p1 + '%' : '—'}</span></div>
       </div>
     </div>
     <div class="pred-vs-mid">VS</div>
     <div class="pred-vs-team right">
       <div class="pred-vs-name">${esc(t2Name)}</div>
       <div class="pred-vs-bars">
-        <div class="pred-vs-stat"><span class="lbl">Forg1</span><span class="val crowd">${crowd2}</span></div>
-        <div class="pred-vs-stat"><span class="lbl">HLTV</span><span class="val hltv">${p2 != null ? p2 + '%' : '—'}</span></div>
+        <div class="pred-vs-stat"><span class="lbl">Comunidad</span><span class="val crowd">${esc(crowd2)}</span></div>
+        <div class="pred-vs-stat"><span class="lbl">Stats</span><span class="val hltv">${p2 != null ? p2 + '%' : '—'}</span></div>
       </div>
     </div>
   </div>`;
 
-  // Barra HLTV
+  // Barra de probabilidad (stats)
   if (p1 != null && p2 != null) {
     html += `<div class="pred-prob-bar">
       <div class="pred-prob-fill" style="width:${p1}%"></div>
@@ -167,7 +281,7 @@ function renderOneCard(pred, i) {
   }
 
   // Stats detalladas
-  if (a && a.dataQuality !== 'none') {
+  if (hasData) {
     const stats = buildStatsRows(a);
     if (stats) {
       html += `<div class="pred-section">
@@ -176,29 +290,12 @@ function renderOneCard(pred, i) {
       </div>`;
     }
 
-    // Factores
     if (a.factors && a.factors.length) {
       html += `<div class="pred-section">
         <div class="pred-section-title">Por qué</div>
         <div class="pred-factors">${a.factors.map(f => `<div class="pred-factor">${esc(f)}</div>`).join('')}</div>
       </div>`;
     }
-
-    // Map pool
-    const mapRows = buildMapRows(a);
-    if (mapRows) {
-      html += `<div class="pred-section">
-        <div class="pred-section-title">Mapas (winrate)</div>
-        <div class="pred-stats">${mapRows}</div>
-      </div>`;
-    }
-  }
-
-  // Value (crowd vs datos)
-  if (c && c.verdict) {
-    html += `<div class="pred-value ${c.hasValue ? 'has-value' : ''}">
-      <div class="pred-value-text">${esc(c.verdict)}</div>
-    </div>`;
   }
 
   html += `</div>`;
@@ -217,17 +314,26 @@ function buildStatsRows(a) {
 
   const w1 = d1?.winrate, w2 = d2?.winrate;
   if (w1 != null || w2 != null) {
-    rows += statRow('Winrate', w1 != null ? w1 + '%' : '—', w2 != null ? w2 + '%' : '—',
+    rows += statRow('Winrate reciente', w1 != null ? w1 + '%' : '—', w2 != null ? w2 + '%' : '—',
       (w1 != null && w2 != null) ? (w1 > w2 ? 'l' : 'r') : '');
   }
 
   if (d1 && d2 && (d1.wins + d1.losses > 0 || d2.wins + d2.losses > 0)) {
-    rows += statRow('Forma', `${d1.wins}V-${d1.losses}D`, `${d2.wins}V-${d2.losses}D`,
+    rows += statRow('Últimos 10', `${d1.wins}V-${d1.losses}D`, `${d2.wins}V-${d2.losses}D`,
       d1.wins > d2.wins ? 'l' : (d2.wins > d1.wins ? 'r' : ''));
   }
 
-  if (d1?.streak || d2?.streak) {
-    rows += statRow('Racha', fmtStreak(d1?.streak), fmtStreak(d2?.streak), '');
+  // Forma en la competencia
+  const ev = (d1 && d1.event) || (d2 && d2.event) || '';
+  if (ev && ((d1 && d1.eventTotal > 0) || (d2 && d2.eventTotal > 0))) {
+    const v1 = (d1 && d1.eventTotal > 0) ? `${d1.eventWins}V-${d1.eventLosses}D` : '—';
+    const v2 = (d2 && d2.eventTotal > 0) ? `${d2.eventWins}V-${d2.eventLosses}D` : '—';
+    const label = ev.length > 22 ? ev.slice(0, 22) + '…' : ev;
+    const better = (d1 && d2 && d1.eventTotal > 0 && d2.eventTotal > 0)
+      ? ((d1.eventWins - d1.eventLosses) > (d2.eventWins - d2.eventLosses) ? 'l'
+        : ((d2.eventWins - d2.eventLosses) > (d1.eventWins - d1.eventLosses) ? 'r' : ''))
+      : '';
+    rows += statRow(label, v1, v2, better);
   }
 
   if (a.h2h && a.h2h.total > 0) {
@@ -236,29 +342,6 @@ function buildStatsRows(a) {
   }
 
   return rows;
-}
-
-function buildMapRows(a) {
-  const m1 = a.team1.maps || [], m2 = a.team2.maps || [];
-  if (!m1.length && !m2.length) return '';
-  const names = new Set([...m1.map(x => x.map), ...m2.map(x => x.map)]);
-  let rows = '';
-  names.forEach(name => {
-    const a1 = m1.find(x => x.map === name);
-    const a2 = m2.find(x => x.map === name);
-    rows += statRow(name,
-      a1 ? a1.winrate + '%' : '—',
-      a2 ? a2.winrate + '%' : '—',
-      (a1 && a2) ? (a1.winrate > a2.winrate ? 'l' : 'r') : '');
-  });
-  return rows;
-}
-
-function fmtStreak(s) {
-  if (!s) return '—';
-  const n = parseInt(s);
-  const type = s.includes('W') ? '🟢' : '🔴';
-  return `${n} ${type}`;
 }
 
 function statRow(label, v1, v2, better) {

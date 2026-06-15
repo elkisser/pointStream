@@ -1,6 +1,6 @@
 /*
  * Generador del icono de la aplicación.
- * Crea un icono con el logo "K" estilo Kick (cuadrado verde con K oscura).
+ * Crea un icono con el logo "P" de pointStream (cuadrado verde con P oscura).
  * Genera: assets/icon.png (256x256) y build/icon.ico (256x256, PNG embebido).
  *
  * Uso: node build/generate-icon.js
@@ -14,8 +14,8 @@ const W = 256;
 const H = 256;
 
 // ----- Colores -----
-const GREEN = [83, 252, 24, 255];   // verde Kick
-const DARK = [11, 14, 15, 255];     // fondo oscuro de la K
+const GREEN = [83, 252, 24, 255];   // verde pointStream
+const DARK = [11, 14, 15, 255];     // fondo oscuro de la letra
 const TRANSPARENT = [0, 0, 0, 0];
 
 // ----- Utilidades geométricas -----
@@ -38,14 +38,15 @@ function distToSegment(px, py, ax, ay, bx, by) {
   return Math.hypot(px - cx, py - cy);
 }
 
-// Forma de la letra K
-function isK(x, y) {
-  // Barra vertical
-  if (x >= 86 && x <= 112 && y >= 74 && y <= 182) return true;
-  // Diagonal superior
-  if (distToSegment(x, y, 110, 128, 168, 74) <= 14) return true;
-  // Diagonal inferior
-  if (distToSegment(x, y, 110, 128, 178, 182) <= 14) return true;
+// Forma de la letra P (pointStream)
+function isP(x, y) {
+  // Barra vertical (asta)
+  if (x >= 92 && x <= 118 && y >= 70 && y <= 188) return true;
+  // Bucle superior (anillo): disco externo menos disco interno, recortado abajo
+  const dx = x - 124;
+  const dy = y - 104;
+  const d = Math.hypot(dx, dy);
+  if (d <= 42 && d >= 17 && y <= 132) return true;
   return false;
 }
 
@@ -59,7 +60,7 @@ function buildPixels() {
       let color;
       if (!inRoundedRect(x, y, 52)) {
         color = TRANSPARENT;
-      } else if (isK(x, y)) {
+      } else if (isP(x, y)) {
         color = DARK;
       } else {
         color = GREEN;

@@ -1,10 +1,10 @@
 @echo off
-title Kick Stream Monitor
+title pointStream
 color 0A
 cls
 
 echo ============================================================
-echo    KICK STREAM MONITOR
+echo    POINTSTREAM
 echo ============================================================
 echo.
 
