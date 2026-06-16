@@ -6,8 +6,10 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "icon": "node build/generate-icon.js",
+    "icon": "electron build/prepare-icon.js",
+    "icon:logo": "node build/generate-icon.js",
     "art": "node build/generate-installer-art.js",
+    "telegram:setup": "node build/setup-telegram-bot.js",
     "screenshots": "electron build/capture-screenshots.js",
     "dist": "npm run icon && npm run art && electron-builder",
     "pack": "npm run icon && electron-builder --dir"
