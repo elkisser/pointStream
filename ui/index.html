@@ -288,6 +288,32 @@
               <button class="quick-team" data-target="team2Input" data-team="Heroic">Heroic</button>
             </div>
           </details>
+
+          <!-- Telegram -->
+          <details class="telegram-section">
+            <summary>📲 Avisos por Telegram</summary>
+            <p class="telegram-help">
+              Recibí cada predicción de Forg1 en Telegram con su estadística y recomendación,
+              estés donde estés. Tocá el botón, abrí el chat con nuestro bot y dale a
+              <strong>Iniciar</strong>. ¡Listo, sin configurar nada!
+            </p>
+            <div class="telegram-actions">
+              <button id="telegramLinkBtn" class="btn-scan telegram-link-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
+                Recibir avisos en Telegram
+              </button>
+            </div>
+            <div class="telegram-row" id="telegramEnabledRow" style="display:none;">
+              <label class="checkbox-label">
+                <input type="checkbox" id="telegramEnabled">
+                <span class="checkbox-custom"></span>
+                <span>Enviar predicciones a Telegram</span>
+              </label>
+              <button id="telegramTestBtn" class="btn-login telegram-test-btn">Probar</button>
+              <button id="telegramUnlinkBtn" class="btn-login telegram-unlink-btn">Desvincular</button>
+            </div>
+            <div id="telegramStatus" class="telegram-status"></div>
+          </details>
         </div>
 
         <!-- Resultados -->

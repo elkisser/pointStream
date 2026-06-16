@@ -27,6 +27,114 @@ function initPredictions() {
 
   // Escuchar avisos del monitor de predicciones
   window.predictionsAPI.onUpdate(handleMonitorUpdate);
+
+  // Configuración de Telegram
+  initTelegram();
+}
+
+// ============================================================
+// Telegram (bot compartido + vinculación por deep link)
+// ============================================================
+
+let telegramPollTimer = null;
+
+async function initTelegram() {
+  const linkBtn = document.getElementById('telegramLinkBtn');
+  const testBtn = document.getElementById('telegramTestBtn');
+  const unlinkBtn = document.getElementById('telegramUnlinkBtn');
+  const enabledCheck = document.getElementById('telegramEnabled');
+  if (!linkBtn) return;
+
+  linkBtn.addEventListener('click', telegramStartLink);
+  testBtn.addEventListener('click', telegramTest);
+  unlinkBtn.addEventListener('click', telegramUnlink);
+  enabledCheck.addEventListener('change', async (e) => {
+    await window.telegramAPI.setEnabled(e.target.checked);
+    refreshTelegramStatus();
+  });
+
+  refreshTelegramStatus();
+}
+
+async function refreshTelegramStatus() {
+  const cfg = await window.telegramAPI.getConfig();
+  const enabledRow = document.getElementById('telegramEnabledRow');
+  const enabledCheck = document.getElementById('telegramEnabled');
+  const linkBtn = document.getElementById('telegramLinkBtn');
+  const statusEl = document.getElementById('telegramStatus');
+
+  if (cfg.configured) {
+    enabledRow.style.display = 'flex';
+    enabledCheck.checked = !!cfg.enabled;
+    linkBtn.style.display = 'none';
+    statusEl.className = 'telegram-status ok';
+    statusEl.textContent = cfg.enabled
+      ? '✅ Vinculado. Vas a recibir las predicciones en Telegram.'
+      : '✅ Vinculado. Avisos pausados (activá la casilla para recibirlos).';
+  } else {
+    enabledRow.style.display = 'none';
+    linkBtn.style.display = '';
+    statusEl.className = 'telegram-status';
+    statusEl.textContent = '';
+  }
+}
+
+async function telegramStartLink() {
+  const statusEl = document.getElementById('telegramStatus');
+  const linkBtn = document.getElementById('telegramLinkBtn');
+
+  const res = await window.telegramAPI.beginLink();
+  if (!res.ok) {
+    statusEl.className = 'telegram-status warn';
+    statusEl.textContent = '⚠️ No se pudo iniciar la vinculación.';
+    return;
+  }
+
+  linkBtn.disabled = true;
+  statusEl.className = 'telegram-status';
+  statusEl.textContent = `Abrí Telegram (se abrió en tu navegador) y tocá Iniciar en el chat con @${res.botUsername}. Esperando…`;
+
+  // Polling: revisar cada 2s si el usuario ya tocó Iniciar (hasta ~90s)
+  if (telegramPollTimer) clearInterval(telegramPollTimer);
+  let elapsed = 0;
+  telegramPollTimer = setInterval(async () => {
+    elapsed += 2;
+    const poll = await window.telegramAPI.pollLink();
+    if (poll.ok && poll.linked) {
+      clearInterval(telegramPollTimer);
+      telegramPollTimer = null;
+      linkBtn.disabled = false;
+      refreshTelegramStatus();
+      return;
+    }
+    if (elapsed >= 90) {
+      clearInterval(telegramPollTimer);
+      telegramPollTimer = null;
+      linkBtn.disabled = false;
+      statusEl.className = 'telegram-status warn';
+      statusEl.textContent = '⚠️ No detecté que iniciaras el chat. Probá de nuevo: tocá el botón y dale Iniciar en Telegram.';
+    }
+  }, 2000);
+}
+
+async function telegramTest() {
+  const statusEl = document.getElementById('telegramStatus');
+  statusEl.className = 'telegram-status';
+  statusEl.textContent = 'Enviando mensaje de prueba…';
+  const res = await window.telegramAPI.test();
+  if (res.ok) {
+    statusEl.className = 'telegram-status ok';
+    statusEl.textContent = '✅ Mensaje de prueba enviado. Revisá Telegram.';
+  } else {
+    statusEl.className = 'telegram-status warn';
+    statusEl.textContent = '⚠️ ' + (res.error || 'No se pudo enviar.');
+  }
+}
+
+async function telegramUnlink() {
+  if (telegramPollTimer) { clearInterval(telegramPollTimer); telegramPollTimer = null; }
+  await window.telegramAPI.unlink();
+  refreshTelegramStatus();
 }
 
 // --- Monitoreo de predicciones ---

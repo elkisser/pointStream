@@ -1173,6 +1173,83 @@ body {
   border-color: var(--kick-green);
 }
 
+/* ---------- Telegram ---------- */
+.telegram-section {
+  margin-top: 1.2rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.telegram-section summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+}
+
+.telegram-section summary::-webkit-details-marker { display: none; }
+.telegram-section summary::before { content: '▸ '; color: var(--kick-green); }
+.telegram-section[open] summary::before { content: '▾ '; }
+.telegram-section summary:hover { color: var(--text-primary); }
+
+.telegram-help {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin: 0.8rem 0;
+}
+
+.telegram-help code {
+  background: var(--bg-tertiary);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.telegram-inputs {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+
+.telegram-inputs .input { flex: 1; }
+
+.telegram-actions {
+  margin: 0.9rem 0;
+}
+
+.telegram-link-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.telegram-unlink-btn { color: var(--danger); }
+.telegram-unlink-btn:hover { border-color: var(--danger); }
+
+.telegram-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.telegram-test-btn { padding: 0.5rem 0.9rem; font-size: 0.85rem; }
+
+.telegram-status {
+  margin-top: 0.8rem;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.telegram-status.ok { color: var(--kick-green); }
+.telegram-status.warn { color: var(--warning); }
+
 /* ---------- Resultados ---------- */
 .pred-results { min-height: 200px; }
 
