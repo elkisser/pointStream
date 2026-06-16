@@ -374,6 +374,7 @@ ipcMain.handle('window-is-maximized', () => {
 const { analyzeMatchup } = require('./hltv');
 const { scrapeForg1Predictions, openForg1Login } = require('./forg1-scraper');
 const { openHLTVConnect } = require('./hltv');
+const telegram = require('./telegram');
 
 ipcMain.handle('analyze-match', async (event, team1, team2) => {
   try {
@@ -429,6 +430,95 @@ function predictionSignature(pred) {
   return `${(pred.question || '').toLowerCase().trim()}::${teams}`;
 }
 
+// ----- Telegram: armado y envío de avisos de predicciones -----
+function escTg(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Construye el mensaje HTML para Telegram con la estadística y la recomendación.
+function buildPredictionMessage(pred, a, isNew) {
+  const lines = [isNew ? '🆕 <b>Nueva predicción en Forg1</b>' : '⏳ <b>Predicción en curso</b>'];
+
+  if (pred.question) lines.push(`❓ <i>${escTg(pred.question)}</i>`);
+
+  const t1 = pred.teams && pred.teams[0];
+  const t2 = pred.teams && pred.teams[1];
+  if (t1 && t2) {
+    lines.push('');
+    lines.push(`🎮 <b>${escTg(t1.name)}</b> vs <b>${escTg(t2.name)}</b>`);
+    lines.push(`👥 Comunidad: ${escTg(t1.percentage || '—')} / ${escTg(t2.percentage || '—')}`);
+  }
+
+  if (a && a.dataQuality && a.dataQuality !== 'none' && a.recommendation) {
+    const lvl = a.verdictLevel || 'gray';
+    const icon = lvl === 'green' ? '✅' : lvl === 'yellow' ? '⚠️' : lvl === 'red' ? '🛑' : 'ℹ️';
+    lines.push('');
+    lines.push(`${icon} <b>Apostar a: ${escTg(a.recommendation)}</b> (${a.confidence}%)`);
+
+    if (a.team1 && a.team2 && a.team1.probability != null && a.team2.probability != null) {
+      lines.push(`📈 Stats: ${escTg(a.team1.name)} ${a.team1.probability}% · ${escTg(a.team2.name)} ${a.team2.probability}%`);
+    }
+    if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
+
+    const d1 = a.team1 && a.team1.data;
+    const d2 = a.team2 && a.team2.data;
+    const stat = [];
+    if ((d1 && d1.ranking) || (d2 && d2.ranking)) {
+      stat.push(`• Ranking: ${d1 && d1.ranking ? '#' + d1.ranking : '—'} vs ${d2 && d2.ranking ? '#' + d2.ranking : '—'}`);
+    }
+    if ((d1 && d1.winrate != null) || (d2 && d2.winrate != null)) {
+      stat.push(`• Winrate: ${d1 && d1.winrate != null ? d1.winrate + '%' : '—'} vs ${d2 && d2.winrate != null ? d2.winrate + '%' : '—'}`);
+    }
+    if (d1 && d2 && (d1.wins + d1.losses > 0 || d2.wins + d2.losses > 0)) {
+      stat.push(`• Últimos: ${d1.wins}V-${d1.losses}D vs ${d2.wins}V-${d2.losses}D`);
+    }
+    const ev = (d1 && d1.event) || (d2 && d2.event) || '';
+    if (ev && ((d1 && d1.eventTotal > 0) || (d2 && d2.eventTotal > 0))) {
+      const v1 = (d1 && d1.eventTotal > 0) ? `${d1.eventWins}V-${d1.eventLosses}D` : '—';
+      const v2 = (d2 && d2.eventTotal > 0) ? `${d2.eventWins}V-${d2.eventLosses}D` : '—';
+      stat.push(`• ${escTg(ev)}: ${v1} vs ${v2}`);
+    }
+    if (a.h2h && a.h2h.total > 0) {
+      stat.push(`• Head to head: ${a.h2h.team1Wins} - ${a.h2h.team2Wins}`);
+    }
+    if (stat.length) {
+      lines.push('');
+      lines.push('📊 <b>Estadísticas (HLTV)</b>');
+      lines.push(stat.join('\n'));
+    }
+  } else if (t1 && t2) {
+    lines.push('');
+    lines.push('ℹ️ Sin estadísticas de HLTV para estos equipos (probá "Conectar HLTV").');
+  }
+
+  lines.push('');
+  if (pred.closesAt) {
+    lines.push(`⏰ Cierra en ${escTg(pred.closesAt)} — ¡todavía está abierta!`);
+  } else {
+    lines.push('⏰ Predicción abierta — entrá antes de que cierre.');
+  }
+
+  return lines.join('\n');
+}
+
+// Analiza (si hay dos equipos) y envía el aviso por Telegram.
+async function notifyTelegramForPrediction(pred, isNew) {
+  if (!telegram.isConfigured()) return;
+  if (!telegram.loadConfig().enabled) return;
+
+  let analysis = null;
+  if (pred.teams && pred.teams.length >= 2) {
+    try {
+      analysis = await analyzeMatchup(pred.teams[0].name, pred.teams[1].name);
+    } catch (e) {
+      console.error('[Telegram] Error analizando para aviso:', e.message);
+    }
+  }
+
+  const msg = buildPredictionMessage(pred, analysis, isNew);
+  await telegram.sendMessage(msg);
+}
+
 // Pasada de monitoreo: scrapea, detecta predicciones nuevas y notifica.
 async function runPredictionScan() {
   let data;
@@ -453,6 +543,8 @@ async function runPredictionScan() {
   for (const p of fresh) {
     const teamsTxt = (p.teams || []).map(t => t.name).join(' vs ');
     showNotification('🎯 Nueva predicción CS2', teamsTxt ? `${p.question || 'Predicción'} — ${teamsTxt}` : (p.question || 'Predicción abierta en Forg1'));
+    // Aviso a Telegram con estadística + recomendación
+    await notifyTelegramForPrediction(p, true);
   }
 
   knownPredictions = currentSigs;
@@ -485,6 +577,13 @@ ipcMain.handle('start-predictions-monitoring', async (event, config = {}) => {
         ok: true, loggedIn: true, predictions: data.predictions || [], hasNew: false, newCount: 0
       });
     }
+
+    // Avisar por Telegram de las predicciones que YA están en curso (no cerradas).
+    if (telegram.isConfigured() && telegram.loadConfig().enabled) {
+      for (const p of (data.predictions || [])) {
+        await notifyTelegramForPrediction(p, false);
+      }
+    }
   } catch (e) {
     console.error('Error en primera pasada de predicciones:', e.message);
   }
@@ -506,6 +605,47 @@ ipcMain.handle('stop-predictions-monitoring', async () => {
 
 ipcMain.handle('get-predictions-monitoring-status', async () => {
   return { isMonitoring: isPredMonitoring };
+});
+
+// ============================================================
+// Telegram: configuración y prueba
+// ============================================================
+
+ipcMain.handle('telegram-get-config', () => {
+  const c = telegram.loadConfig();
+  return {
+    chatId: c.chatId,
+    enabled: c.enabled,
+    configured: telegram.isConfigured(),
+    botUsername: telegram.BOT_USERNAME
+  };
+});
+
+// Inicia la vinculación: genera el código y abre el chat del bot en el navegador.
+ipcMain.handle('telegram-begin-link', () => {
+  const link = telegram.beginLink();
+  if (link.ok) shell.openExternal(link.url);
+  return link;
+});
+
+// La UI llama repetidamente esto hasta que el usuario toca "Iniciar" en Telegram.
+ipcMain.handle('telegram-poll-link', async () => {
+  return await telegram.pollLink();
+});
+
+ipcMain.handle('telegram-set-enabled', (event, enabled) => {
+  telegram.saveConfig({ enabled: !!enabled });
+  return { ok: true, enabled: !!enabled };
+});
+
+ipcMain.handle('telegram-unlink', () => {
+  return telegram.unlink();
+});
+
+ipcMain.handle('telegram-test', async () => {
+  return await telegram.sendMessage(
+    '✅ <b>pointStream</b> conectado a Telegram.\nVas a recibir acá las predicciones de Forg1 con su estadística y recomendación.'
+  );
 });
 
 // Analiza automáticamente: scrapea forg1 + busca stats en HLTV

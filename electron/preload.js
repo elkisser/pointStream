@@ -50,3 +50,13 @@ contextBridge.exposeInMainWorld('predictionsAPI', {
     ipcRenderer.on('predictions-update', (event, data) => callback(data));
   }
 });
+
+// API de Telegram (avisos de predicciones con bot compartido)
+contextBridge.exposeInMainWorld('telegramAPI', {
+  getConfig: () => ipcRenderer.invoke('telegram-get-config'),
+  beginLink: () => ipcRenderer.invoke('telegram-begin-link'),
+  pollLink: () => ipcRenderer.invoke('telegram-poll-link'),
+  setEnabled: (enabled) => ipcRenderer.invoke('telegram-set-enabled', enabled),
+  unlink: () => ipcRenderer.invoke('telegram-unlink'),
+  test: () => ipcRenderer.invoke('telegram-test')
+});
