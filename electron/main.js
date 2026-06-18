@@ -375,6 +375,7 @@ const { analyzeMatchup } = require('./hltv');
 const { scrapeForg1Predictions, openForg1Login } = require('./forg1-scraper');
 const { openHLTVConnect } = require('./hltv');
 const telegram = require('./telegram');
+console.log('[Main] Módulo Telegram cargado. isConfigured:', telegram.isConfigured());
 
 ipcMain.handle('analyze-match', async (event, team1, team2) => {
   try {
@@ -503,19 +504,29 @@ function buildPredictionMessage(pred, a, isNew) {
 
 // Analiza (si hay dos equipos) y envía el aviso por Telegram.
 async function notifyTelegramForPrediction(pred, isNew) {
-  if (!telegram.isConfigured()) return;
-  if (!telegram.loadConfig().enabled) return;
+  console.log('[Main] notifyTelegramForPrediction:', { isNew, question: pred?.question, configured: telegram.isConfigured(), enabled: telegram.loadConfig().enabled });
+  
+  if (!telegram.isConfigured()) {
+    console.log('[Main] Telegram no configurado, saltando notificación');
+    return;
+  }
+  if (!telegram.loadConfig().enabled) {
+    console.log('[Main] Telegram deshabilitado, saltando notificación');
+    return;
+  }
 
   let analysis = null;
   if (pred.teams && pred.teams.length >= 2) {
     try {
+      console.log('[Main] Analizando matchup:', pred.teams[0].name, 'vs', pred.teams[1].name);
       analysis = await analyzeMatchup(pred.teams[0].name, pred.teams[1].name);
     } catch (e) {
-      console.error('[Telegram] Error analizando para aviso:', e.message);
+      console.error('[Main] Error analizando para aviso:', e.message);
     }
   }
 
   const msg = buildPredictionMessage(pred, analysis, isNew);
+  console.log('[Main] Enviando mensaje por Telegram...');
   await telegram.sendMessage(msg);
 }
 
@@ -525,23 +536,28 @@ async function runPredictionScan() {
   try {
     data = await scrapeForg1Predictions();
   } catch (err) {
+    console.error('[Main] Error scrapeando Forg1:', err.message);
     if (mainWindow) mainWindow.webContents.send('predictions-update', { ok: false, error: err.message });
     return;
   }
 
   if (!data.loggedIn) {
+    console.log('[Main] No está logueado en Forg1');
     if (mainWindow) mainWindow.webContents.send('predictions-update', { ok: false, loggedIn: false });
     return;
   }
 
   const preds = data.predictions || [];
+  console.log('[Main] Predicciones encontradas:', preds.length);
   const currentSigs = new Set(preds.map(predictionSignature));
 
   // Nuevas = están ahora pero no estaban en el ciclo anterior
   const fresh = preds.filter(p => !knownPredictions.has(predictionSignature(p)));
+  console.log('[Main] Predicciones nuevas:', fresh.length);
 
   for (const p of fresh) {
     const teamsTxt = (p.teams || []).map(t => t.name).join(' vs ');
+    console.log('[Main] Nueva predicción detectada:', teamsTxt);
     showNotification('🎯 Nueva predicción CS2', teamsTxt ? `${p.question || 'Predicción'} — ${teamsTxt}` : (p.question || 'Predicción abierta en Forg1'));
     // Aviso a Telegram con estadística + recomendación
     await notifyTelegramForPrediction(p, true);
@@ -578,12 +594,8 @@ ipcMain.handle('start-predictions-monitoring', async (event, config = {}) => {
       });
     }
 
-    // Avisar por Telegram de las predicciones que YA están en curso (no cerradas).
-    if (telegram.isConfigured() && telegram.loadConfig().enabled) {
-      for (const p of (data.predictions || [])) {
-        await notifyTelegramForPrediction(p, false);
-      }
-    }
+    // NO notificar las predicciones que ya existen al iniciar monitoreo.
+    // Solo notificar las NUEVAS que aparezcan en los ciclos posteriores.
   } catch (e) {
     console.error('Error en primera pasada de predicciones:', e.message);
   }

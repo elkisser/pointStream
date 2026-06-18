@@ -16,6 +16,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const axios = require('axios');
 
+console.log('[Telegram] Módulo cargado');
+
 const BOT_USERNAME = 'PointStreaming_bot';
 
 // Token ofuscado (XOR + base64). Se reconstruye en memoria al usarlo.
@@ -63,47 +65,51 @@ function apiUrl(method) {
 }
 
 // ----- Vinculación por deep link -----
-let pendingCode = null;
+let pendingChatId = null;
 
-// Genera un código único y devuelve el deep link para abrir el chat del bot.
+// Genera un deep link para abrir el chat del bot.
 function beginLink() {
-  pendingCode = 'ps' + crypto.randomBytes(8).toString('hex');
+  // No necesitamos código, solo detectamos la primera persona que toca /start
   return {
     ok: true,
-    code: pendingCode,
-    url: `https://t.me/${BOT_USERNAME}?start=${pendingCode}`,
+    url: `https://t.me/${BOT_USERNAME}?start=link`,
     botUsername: BOT_USERNAME
   };
 }
 
-// Busca en getUpdates un "/start <code>" que coincida con el código pendiente.
-// IMPORTANTE: no se confirma el offset (no se consume la cola), así varios
-// usuarios pueden vincularse con el mismo bot sin pisarse entre sí.
+// Busca en getUpdates cualquier mensaje de /start.
+// El primer /start que recibamos, lo tomamos como la vinculación del usuario.
 async function pollLink() {
-  if (!pendingCode) return { ok: false, error: 'No hay vinculación en curso' };
-
+  console.log('[Telegram] Polling para vinculación (esperando /start)...');
   let updates = [];
   try {
     const { data } = await axios.get(apiUrl('getUpdates'), {
       params: { timeout: 0, allowed_updates: JSON.stringify(['message']) },
       timeout: 10000
     });
-    if (!data.ok) return { ok: false, error: 'Telegram rechazó la consulta' };
+    if (!data.ok) {
+      console.error('[Telegram] getUpdates rechazó la consulta:', data);
+      return { ok: false, error: 'Telegram rechazó la consulta' };
+    }
     updates = data.result || [];
+    console.log('[Telegram] getUpdates retornó', updates.length, 'mensajes');
   } catch (e) {
-    // 409: otra consulta getUpdates simultánea. Reintentar más tarde.
+    console.error('[Telegram] Error en getUpdates:', e.message);
     return { ok: false, error: 'retry' };
   }
 
   for (let i = updates.length - 1; i >= 0; i--) {
     const m = updates[i].message;
-    if (!m || !m.text || !m.chat) continue;
-    const txt = m.text.trim();
-    if (txt === `/start ${pendingCode}` || txt === pendingCode) {
+    if (!m || !m.chat) continue;
+    const txt = (m.text || '').trim();
+    console.log('[Telegram] Revisando mensaje:', txt, 'de chat:', m.chat.id);
+    
+    // Cualquier /start es válido
+    if (txt.startsWith('/start')) {
       const chatId = String(m.chat.id);
       const chatName = m.chat.first_name || m.chat.username || m.chat.title || '';
+      console.log('[Telegram] ✅ Vinculado! chatId:', chatId, 'nombre:', chatName);
       saveConfig({ chatId, enabled: true });
-      pendingCode = null;
       await sendMessage(
         `✅ <b>Listo, ${escapeName(chatName)}!</b>\nVas a recibir acá las predicciones de Forg1 con su estadística y recomendación. 🎯`,
         { chatId }
@@ -112,6 +118,7 @@ async function pollLink() {
     }
   }
 
+  console.log('[Telegram] Aún no se vinculó, siguiendo polling...');
   return { ok: true, linked: false };
 }
 
@@ -122,14 +129,21 @@ function escapeName(s) {
 // ----- Envío de mensajes -----
 async function sendMessage(text, opts = {}) {
   const chatId = opts.chatId || loadConfig().chatId;
-  if (!chatId) return { ok: false, error: 'Telegram no está vinculado' };
+  console.log('[Telegram] sendMessage - chatId:', chatId, '- configured:', !!loadConfig().chatId);
+  
+  if (!chatId) {
+    console.error('[Telegram] No está vinculado - no hay chatId');
+    return { ok: false, error: 'Telegram no está vinculado' };
+  }
 
   try {
+    console.log('[Telegram] Enviando mensaje a', chatId);
     const { data } = await axios.post(
       apiUrl('sendMessage'),
       { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true },
       { timeout: 12000 }
     );
+    console.log('[Telegram] Mensaje enviado OK:', data.ok);
     return { ok: !!data.ok };
   } catch (e) {
     const desc = e.response?.data?.description || e.message;
