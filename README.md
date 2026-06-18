@@ -4,18 +4,20 @@
 
 # 🎮 pointStream
 
-### Monitor inteligente de streams + Predicciones de CS2 en tiempo real
+**Monitor inteligente de streams + Predicciones de CS2 en tiempo real**
 
 *Nunca pierdas un stream en vivo. Siempre ten datos para tus predicciones.*
 
-[![License](https://img.shields.io/badge/License-MIT-53FC18?style=for-the-badge&logoColor=white)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.1.0-blue?style=for-the-badge)](https://github.com/elkisser/pointStream/releases)
-[![Windows](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/elkisser/pointStream/releases)
-[![Status](https://img.shields.io/badge/Status-Production%20Ready-green?style=for-the-badge)](https://github.com/elkisser/pointStream)
+<br/>
+
+[![License](https://img.shields.io/badge/LICENSE-MIT-53FC18?style=flat-square)](LICENSE)
+[![Version](https://img.shields.io/badge/VERSION-1.1.0-blue?style=flat-square)](https://github.com/elkisser/pointStream/releases)
+[![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS%2010%20%7C%2011-0078D6?style=flat-square)](https://github.com/elkisser/pointStream/releases)
+[![Status](https://img.shields.io/badge/STATUS-PRODUCTION%20READY-green?style=flat-square)](https://github.com/elkisser/pointStream)
 
 <br/>
 
-**[⬇️ DESCARGAR AHORA](#-descarga)** • [Ver Cambios](#-novedades-v110) • [Screenshots](#-galería-visual)
+### [⬇️ DESCARGAR AHORA](https://github.com/elkisser/pointStream/releases/download/v1.1.0/pointStream-Setup-1.0.0.exe) • [Ver Cambios](https://github.com/elkisser/pointStream/releases) • [GitHub](https://github.com/elkisser/pointStream)
 
 </div>
 
@@ -205,33 +207,22 @@ Agrega tus streamers favoritos y disfruta
 
 ### 🎁 Última Versión: v1.1.0
 
-[![Download pointStream](https://img.shields.io/badge/⬇️%20Descargar%20Instalador-Windows-0078D6?style=for-the-badge&logoColor=white)](https://github.com/elkisser/pointStream/releases/download/v1.1.0/pointStream-Setup-1.0.0.exe)
+[![Download pointStream](https://img.shields.io/badge/⬇️%20DESCARGAR%20AHORA-53FC18?style=flat-square&logoColor=white&labelColor=000)](https://github.com/elkisser/pointStream/releases/download/v1.1.0/pointStream-Setup-1.0.0.exe)
 
-**Tamaño:** ~80 MB • **Windows 10+** • **Instalación en 30 segundos**
+**Tamaño:** ~80 MB • **Windows 10+** • **Sin instalación complicada**
 
-> ✅ **Totalmente gratis.** ✅ **Sin anuncios.** ✅ **Sin cuenta requerida.**
+✅ Totalmente gratis • ✅ Sin anuncios • ✅ Sin cuenta requerida
 
 </div>
-
-### ¿Problemas con SmartScreen?
-
-Si Windows muestra *"Windows protegió tu PC"*:
-1. Haz clic en **Más información**
-2. Haz clic en **Ejecutar de todas formas**
-
-Es seguro. El código está disponible en GitHub para que verifiques.
 
 ---
 
 ## 🎁 Novedades v1.1.0
 
-✨ **Fixes y mejoras recientes:**
-
-- ✅ Telegram integration fixed — conecta tu bot sin códigos
-- ✅ UI redesigned — estilos modernos con gradients y transiciones
-- ✅ Status messages improved — información clara y visual
-- ✅ Robustness — detección más confiable de predicciones
-- ✅ Performance — caché mejorada de estadísticas
+- ✅ **Telegram integration fixed** — conecta tu bot sin códigos
+- ✅ **UI redesigned** — estilos modernos con gradients y transiciones  
+- ✅ **Robustness** — detección más confiable de predicciones
+- ✅ **Performance** — caché mejorada de estadísticas
 
 ---
 
@@ -329,14 +320,10 @@ Distribuido bajo la licencia **MIT**. Libre de usar, modificar y distribuir.
 
 <div align="center">
 
-### 💚 Hecho para la comunidad de Kick, Twitch y CS2
+💚 **Hecho para la comunidad de Kick, Twitch y CS2**
 
-**[⬇️ DESCARGA AHORA](#-descarga)** • [GitHub](https://github.com/elkisser/pointStream) • [Releases](https://github.com/elkisser/pointStream/releases)
+### [⬇️ DESCARGA AHORA](https://github.com/elkisser/pointStream/releases/download/v1.1.0/pointStream-Setup-1.0.0.exe) • [GitHub](https://github.com/elkisser/pointStream) • [Releases](https://github.com/elkisser/pointStream/releases)
 
-*Versión 1.1.0 • 100% Libre • Sin publicidad • Windows 10+*
-
----
-
-**Creado con ❤️ para streamers, apostadores y analistas de CS2**
+**Versión 1.1.0 • 100% Libre • Sin publicidad • Windows 10+**
 
 </div>
