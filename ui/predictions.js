@@ -68,14 +68,14 @@ async function refreshTelegramStatus() {
     enabledCheck.checked = !!cfg.enabled;
     linkBtn.style.display = 'none';
     statusEl.className = 'telegram-status ok';
-    statusEl.textContent = cfg.enabled
-      ? '✅ Vinculado. Vas a recibir las predicciones en Telegram.'
-      : '✅ Vinculado. Avisos pausados (activá la casilla para recibirlos).';
+    statusEl.innerHTML = cfg.enabled
+      ? '✅ <strong>Conectado</strong><br>Recibirás las predicciones en tu chat de Telegram.'
+      : '⏸️ <strong>Pausado</strong><br>Activá los avisos en la casilla para recibirlos.';
   } else {
     enabledRow.style.display = 'none';
     linkBtn.style.display = '';
-    statusEl.className = 'telegram-status';
-    statusEl.textContent = '';
+    statusEl.className = 'telegram-status warn';
+    statusEl.innerHTML = '⚠️ <strong>Sin vincular</strong><br>Tocá el botón para conectar tu Telegram.';
   }
 }
 
