@@ -56,7 +56,7 @@ No hay forma sencilla de monitorear múltiples streams simultáneamente sin tene
     <td align="center">
       <h3>🎨 Temática Dinámica</h3>
       <p><strong>Kick (Verde) • Twitch (Violeta)</strong></p>
-      <p>La interfaz se adapta a los colores de tu plataforma favorita. Premium visual con transiciones suaves.</p>
+      <p>La interfaz se adapta a los colores de tu plataforma favorita.</p>
     </td>
   </tr>
   <tr>
@@ -101,7 +101,7 @@ No hay forma sencilla de monitorear múltiples streams simultáneamente sin tene
 
 ---
 
-### Monitor - Tema Twitch (Violeta Premium)
+### Monitor - Tema Twitch (Violeta)
 <img src="assets/screenshots/monitor-twitch.png" alt="pointStream Monitor Twitch" width="100%" style="border-radius: 12px; margin: 20px 0;" />
 
 **Mismas funcionalidades, diferente vibe:** Los colores se adaptan a tu plataforma favorita.
