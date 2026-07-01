@@ -26,6 +26,9 @@ function getForg1Window() {
  * Sin whitelist rígida — detecta cualquier par (nombre + %) dinámicamente.
  */
 function parsePredictions(body) {
+  const lines = body.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  console.log('[Forg1] Total líneas:', lines.length);
+
   const UI_WORDS = new Set([
     'POOL','JUGADORES','TU JUGADA','SI GANÁS','SI GANAS','PTS','PREDICCIÓN',
     'PREDICCION','LIVE','EN VIVO','EVOLUCIÓN','EVOLUCION','POR OPCIÓN','POR OPCION',
@@ -34,14 +37,31 @@ function parsePredictions(body) {
     'LEADERBOARD','BOT 1XBET','MI PERFIL','TU BALANCE','GANÁS','GANAS',
     'APOSTAR','APUESTA','TOTAL','VS','EMPATE','RESULTADO','MAPA','MAPAS',
     'SPONSOR','OFICIAL','STUDIO','ESTUDIO','CREATED BY','PRIVACIDAD','TWITTER',
-    'INSTAGRAM','YOUTUBE','FACEBOOK','CONECTAR','LEADERBOARD','SORTEO',
-    'PENDIENTE','HISTORIAL','NOVEDADES','PISO9',
+    'INSTAGRAM','YOUTUBE','FACEBOOK','CONECTAR','SORTEO','MIS PREDICCIONES',
+    'PENDIENTE','HISTORIAL','NOVEDADES','PISO9','JUGADAS','GANADAS','PERDIDAS',
+    'PUNTOS GANADOS','PUNTOS PERDIDOS','AUTH / KICK','CONECTAR CON KICK',
   ]);
 
   function isTimeToken(s) {
     const u = s.toUpperCase().trim();
     return /HACE\s|AHORA|\bAYER\b|\bHOY\b|^EN\s+\d|\d+\s*(H|HS|HORA|HORAS|MIN|MINUTO|MINUTOS|M|D|DÍA|DÍAS|SEG|SEGUNDOS)\b|^\d{1,2}:\d{2}$/.test(u);
   }
+
+  // Detectar el username del usuario logueado para excluirlo.
+  // El username de Kick aparece cerca del balance/perfil, suele tener guión bajo
+  // o ser una palabra corta seguida de un número pequeño (ej: "el_kast1" seguido de "3")
+  const detectedUsername = (() => {
+    for (let i = 0; i < Math.min(lines.length, 60); i++) {
+      const l = lines[i];
+      const next = lines[i + 1] || '';
+      // Username típico de Kick: minúsculas, puede tener guión bajo o números
+      if (/^[a-zA-Z0-9_]{3,25}$/.test(l) && /^[a-z]/.test(l) && /^\d{1,3}$/.test(next.trim())) {
+        return l.toLowerCase();
+      }
+    }
+    return null;
+  })();
+  if (detectedUsername) console.log('[Forg1] Username ignorado:', detectedUsername);
 
   function isValidOption(s) {
     if (!s) return false;
@@ -51,25 +71,28 @@ function parsePredictions(body) {
     if (!/[A-Za-zÀ-ÿ]/.test(t)) return false;
     if (/^[\d.,%:+\-]+$/.test(t)) return false;
     if (isTimeToken(t)) return false;
-    if (/[./\\@#]/.test(t)) return false;   // no URLs
-    if (/^\d+$/.test(t)) return false;       // no solo números
+    if (/[./\\@#]/.test(t)) return false;             // no URLs
+    if (/^\d+$/.test(t)) return false;                 // no solo números
+    // Excluir usernames de Kick: formato minúsculas con guión bajo (ej: el_kast1)
+    if (/^[a-z][a-z0-9_]+$/.test(t) && t.includes('_')) return false;
     const u = t.toUpperCase();
     if (UI_WORDS.has(u)) return false;
-    for (const w of UI_WORDS) {
-      if (w.length > 5 && u === w) return false;
-    }
+    // Excluir el username detectado
+    if (detectedUsername && t.toLowerCase() === detectedUsername) return false;
     return true;
   }
 
+  // Porcentaje: número entre 10 y 99 (excluir 1-9 que son contadores del perfil)
   function isPct(s) {
-    return /^\d{1,3}\s*%?$/.test((s || '').trim());
+    const t = (s || '').trim();
+    if (!/^\d{2,3}\s*%?$/.test(t)) return false;
+    const n = parseInt(t);
+    return n >= 10 && n <= 99;
   }
 
   const QKEYS = /gana|ganar|ganador|gane|hace|mata|kill|mapa|\bmap\b|stage|ronda|round|pistol|clutch|mvp|primer|primera|gan[aá]|m[aá]s\s|cu[aá]nt|cu[aá]l|qui[eé]n/i;
 
-  const lines = body.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-  // Buscar pares opción + %
+  // Buscar pares opción + % (porcentaje ≥ 10%)
   const hits = [];
   for (let i = 0; i < lines.length; i++) {
     if (!isValidOption(lines[i])) continue;
@@ -78,14 +101,19 @@ function parsePredictions(body) {
     if (isPct(n1))      pct = parseInt(n1);
     else if (isPct(n2)) pct = parseInt(n2);
     if (pct != null && !hits.find(h => h.name === lines[i])) {
+      console.log(`[Forg1] Hit: "${lines[i]}" -> ${pct}%`);
       hits.push({ name: lines[i], percentage: pct + '%', idx: i });
     }
   }
 
-  if (hits.length < 2) return [];
+  if (hits.length < 2) {
+    console.log('[Forg1] No hay suficientes hits para una predicción');
+    return [];
+  }
 
   const teams = [hits[0], hits[1]].map(h => ({ name: h.name, percentage: h.percentage }));
   const firstIdx = hits[0].idx;
+  console.log(`[Forg1] Equipos detectados: "${teams[0].name}" ${teams[0].percentage} vs "${teams[1].name}" ${teams[1].percentage}`);
 
   // Buscar pregunta hacia arriba
   const HELP_WORDS = ['CÓMO FUNCIONA','COMO FUNCIONA','¿CÓMO','¿COMO','QUÉ ES','QUE ES',
@@ -140,16 +168,15 @@ function parsePredictions(body) {
 }
 
 function isLoggedIn(body) {
-  if (body.includes('CONECTAR CON KICK') && !body.includes('TU BALANCE') && !body.includes('MI PERFIL')) {
-    return false;
-  }
-  return body.includes('TU BALANCE') ||
-    body.includes('MI PERFIL') ||
-    body.includes('Tu balance') ||
-    body.includes('Mi perfil') ||
-    body.includes('CERRAR SESIÓN') ||
-    body.includes('MI CUENTA') ||
-    (body.includes('PREDICCION') && body.length > 2000 && !body.includes('CONECTAR CON KICK'));
+  const hasKickConnect = body.includes('CONECTAR CON KICK');
+  const hasBalance = body.includes('TU BALANCE') || body.includes('Tu balance');
+  const hasPerfil = body.includes('MI PERFIL') || body.includes('Mi perfil');
+  const hasCerrar = body.includes('CERRAR SESIÓN') || body.includes('Cerrar sesión');
+  const hasCuenta = body.includes('MI CUENTA') || body.includes('Mi cuenta');
+  console.log(`[Forg1] login check: kickConnect=${hasKickConnect} balance=${hasBalance} perfil=${hasPerfil} cerrar=${hasCerrar} cuenta=${hasCuenta} bodyLen=${body.length}`);
+  if (hasKickConnect && !hasBalance && !hasPerfil && !hasCerrar && !hasCuenta) return false;
+  return hasBalance || hasPerfil || hasCerrar || hasCuenta ||
+    (body.includes('PREDICCION') && body.length > 2000 && !hasKickConnect);
 }
 
 /**

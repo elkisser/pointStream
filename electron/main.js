@@ -599,8 +599,12 @@ ipcMain.handle('start-predictions-monitoring', async (event, config = {}) => {
       });
     }
 
-    // NO notificar las predicciones que ya existen al iniciar monitoreo.
-    // Solo notificar las NUEVAS que aparezcan en los ciclos posteriores.
+    // Notificar por Telegram las predicciones que YA están abiertas al iniciar
+    if (telegram.isConfigured() && telegram.loadConfig().enabled) {
+      for (const p of (data.predictions || [])) {
+        await notifyTelegramForPrediction(p, false); // false = "en curso", no "nueva"
+      }
+    }
   } catch (e) {
     console.error('Error en primera pasada de predicciones:', e.message);
   }
