@@ -413,6 +413,48 @@ function eventWinrate(d) {
 }
 
 /**
+ * Busca la competencia en que se están enfrentando los dos equipos HOY.
+ * Estrategia: tomar los resultados recientes (últimos 25) de ambos equipos
+ * y buscar el evento que aparezca en común entre los últimos ~5 resultados de cada uno.
+ * Si hay un partido reciente de A vs B, el evento de ese partido es la respuesta exacta.
+ */
+function getSharedEvent(res1, res2, team1Name, team2Name) {
+  if (!res1?.length || !res2?.length) return null;
+
+  // Estrategia 1: buscar el evento actual de ambos equipos (sus últimos partidos)
+  // Si ambos están jugando en el mismo torneo → eso es lo que buscamos
+  const recent1 = res1.slice(0, 6).map(r => r.event).filter(Boolean);
+  const recent2 = res2.slice(0, 6).map(r => r.event).filter(Boolean);
+
+  // Coincidencia exacta en los últimos resultados de ambos
+  for (const ev of recent1) {
+    if (recent2.includes(ev)) return { event: ev, source: 'shared-recent' };
+  }
+
+  // Estrategia 2: coincidencia parcial de nombre de evento (un evento puede tener
+  // variaciones de nombre como "ESL Pro League S20" vs "ESL Pro League Season 20")
+  for (const ev1 of recent1) {
+    const k1 = ev1.toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const ev2 of recent2) {
+      const k2 = ev2.toLowerCase().replace(/[^a-z0-9]/g, '');
+      // Si comparten al menos 8 caracteres clave seguidos
+      if (k1.length > 6 && k2.length > 6) {
+        const shorter = k1.length < k2.length ? k1 : k2;
+        const longer  = k1.length < k2.length ? k2 : k1;
+        if (longer.includes(shorter.substring(0, Math.min(shorter.length, 12)))) {
+          return { event: ev1, source: 'shared-fuzzy' };
+        }
+      }
+    }
+  }
+
+  // Estrategia 3: usar el evento actual del equipo 1 (más probable que sea el contexto)
+  if (recent1[0]) return { event: recent1[0], source: 'team1-current' };
+
+  return null;
+}
+
+/**
  * Análisis completo de un enfrentamiento (rápido + por competencia).
  */
 async function analyzeMatchup(team1Name, team2Name) {
@@ -422,6 +464,7 @@ async function analyzeMatchup(team1Name, team2Name) {
     team1: { name: normalizeTeamName(team1Name), data: null, probability: 50, found: false },
     team2: { name: normalizeTeamName(team2Name), data: null, probability: 50, found: false },
     h2h: null,
+    sharedEvent: null,   // competencia detectada donde se enfrentan hoy
     recommendation: '',
     confidence: 0,
     verdict: '',
@@ -454,6 +497,13 @@ async function analyzeMatchup(team1Name, team2Name) {
   A.team1.data = buildTeamData(r1, res1);
   A.team2.data = buildTeamData(r2, res2);
   A.dataQuality = (r1 && r2) ? 'full' : 'partial';
+
+  // Detectar la competencia en que están jugando hoy (evento compartido)
+  const shared = getSharedEvent(res1, res2, A.team1.name, A.team2.name);
+  if (shared) {
+    A.sharedEvent = shared.event;
+    console.log(`[HLTV] Competencia detectada: "${shared.event}" (fuente: ${shared.source})`);
+  }
 
   // ---- Scoring ----
   let s1 = 0, s2 = 0;

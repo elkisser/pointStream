@@ -440,6 +440,11 @@ function escTg(s) {
 function buildPredictionMessage(pred, a, isNew) {
   const lines = [isNew ? '🆕 <b>Nueva predicción en Forg1</b>' : '⏳ <b>Predicción en curso</b>'];
 
+  // Competencia detectada
+  if (a && a.sharedEvent) {
+    lines.push(`🏆 <b>${escTg(a.sharedEvent)}</b>`);
+  }
+
   if (pred.question) lines.push(`❓ <i>${escTg(pred.question)}</i>`);
 
   const t1 = pred.teams && pred.teams[0];

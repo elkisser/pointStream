@@ -1452,6 +1452,24 @@ body[data-platform="twitch"] .telegram-status.ok {
   background: rgba(255, 59, 59, 0.12);
 }
 
+/* Badge de competencia detectada */
+.pred-card-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.45rem 0 0.6rem 0;
+  padding: 0.3rem 0.75rem;
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgba(var(--accent-rgb), 1);
+  letter-spacing: 0.02em;
+  max-width: fit-content;
+}
+}
+
 /* ---------- Verdict ---------- */
 .pred-verdict {
   display: flex;

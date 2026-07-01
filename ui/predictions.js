@@ -177,7 +177,15 @@ function handleMonitorUpdate(data) {
 
   if (data.loggedIn === false) {
     setMonitoring(false);
-    setResults(msgHTML('warning', 'Sesión de Forg1 cerrada', 'Volvé a loguearte para seguir monitoreando.'));
+    setResults(`
+      <div class="msg msg-warning">
+        <div class="msg-icon">⚠️</div>
+        <div class="msg-body">
+          <strong>Sesión de Forg1 expirada</strong>
+          <p>Tu sesión en Forg1 cerró. Hacé click en Login Forg1, iniciá sesión con Kick y cerrá la ventana.</p>
+          <button class="btn-login" onclick="doLogin()" style="margin-top:0.7rem;">🔑 Ir a Login Forg1</button>
+        </div>
+      </div>`);
     return;
   }
 
@@ -199,7 +207,15 @@ async function doScan() {
     const res = await window.predictionsAPI.autoAnalyze();
     if (!res.success) {
       if (res.error === 'not-logged-in') {
-        setResults(msgHTML('warning', 'No estás logueado en Forg1', 'Tocá "Login Forg1", iniciá sesión, cerrá esa ventana y volvé a escanear.'));
+        setResults(`
+          <div class="msg msg-warning">
+            <div class="msg-icon">⚠️</div>
+            <div class="msg-body">
+              <strong>Sesión de Forg1 expirada</strong>
+              <p>Tu sesión en Forg1 cerró. Hacé click en Login Forg1, iniciá sesión con Kick y cerrá la ventana.</p>
+              <button class="btn-login" onclick="doLogin()" style="margin-top:0.7rem;">🔑 Ir a Login Forg1</button>
+            </div>
+          </div>`);
       } else {
         setResults(msgHTML('error', 'Algo falló', res.error));
       }
@@ -324,10 +340,14 @@ function renderOneCard(pred, i) {
     ? `<span class="pred-card-timer" data-countdown="${secs}">cierra en ${fmtClock(secs)}</span>`
     : (pred.closesAt ? `<span class="pred-card-timer">cierra ${esc(pred.closesAt)}</span>` : '');
 
+  // Competencia detectada (sharedEvent viene del análisis HLTV)
+  const eventName = a?.sharedEvent || '';
+
   html += `<div class="pred-card-head">
     <span class="pred-card-q">${esc(pred.question || 'Predicción ' + (i + 1))}</span>
     ${timerHtml}
-  </div>`;
+  </div>
+  ${eventName ? `<div class="pred-card-event">🏆 ${esc(eventName)}</div>` : ''}`;
 
   const hasData = a && a.dataQuality && a.dataQuality !== 'none';
 
