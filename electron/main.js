@@ -423,6 +423,7 @@ let predMonitorInterval = null;
 let isPredMonitoring = false;
 let knownPredictions = new Set();
 let notifiedPredictions = new Set(); // predicciones ya notificadas por Telegram (no repetir)
+let recentlyClosed = new Map();      // sig -> timestamp, cooldown 5min para no re-notificar
 
 function predictionSignature(pred) {
   const teams = (pred.teams || [])
@@ -562,23 +563,54 @@ async function runPredictionScan() {
     for (const sig of knownPredictions) {
       if (!currentSigs.has(sig)) {
         console.log('[Main] Predicción cerrada:', sig);
-        // Notificar cierre por Telegram (sin análisis, mensaje simple)
         if (telegram.isConfigured() && telegram.loadConfig().enabled) {
           const parts = sig.split('::');
           const questionPart = parts[0] || 'Predicción';
           const teamsPart = parts[1] || '';
-          await telegram.sendMessage(
-            `🔒 <b>Predicción cerrada</b>\n<i>${questionPart}</i>${teamsPart ? `\n⚔️ ${teamsPart}` : ''}\n\nYa no se aceptan apuestas.`
-          );
+
+          // Buscar si hay resultado en el DOM actual
+          const recentResults = data.recentResults || [];
+          const result = recentResults[0]; // el más reciente
+
+          let msg = `🔒 <b>Predicción cerrada</b>\n<i>${questionPart}</i>`;
+          if (teamsPart) msg += `\n⚔️ ${teamsPart}`;
+
+          if (result) {
+            msg += `\n\n`;
+            if (result.won) {
+              msg += `🏆 <b>¡GANASTE!</b> Ganó: <b>${escTg(result.winner)}</b>`;
+              if (result.pointsChange) msg += `\n💰 <b>${escTg(result.pointsChange)}</b>`;
+            } else {
+              msg += `❌ <b>Perdiste.</b> Ganó: <b>${escTg(result.winner)}</b>`;
+              if (result.pointsChange) msg += `\n💸 ${escTg(result.pointsChange)}`;
+            }
+          }
+
+          await telegram.sendMessage(msg);
         }
-        // Limpiar del set de notificadas para que si vuelve a abrir se notifique de nuevo
         notifiedPredictions.delete(sig);
+        recentlyClosed.set(sig, Date.now()); // cooldown 5 minutos
       }
     }
   }
 
+  // Limpiar cooldowns expirados (>5 min)
+  const CLOSE_COOLDOWN = 5 * 60 * 1000;
+  for (const [sig, ts] of recentlyClosed) {
+    if (Date.now() - ts > CLOSE_COOLDOWN) recentlyClosed.delete(sig);
+  }
+
   // Nuevas = están ahora pero no estaban en el ciclo anterior
-  const fresh = preds.filter(p => !knownPredictions.has(predictionSignature(p)));
+  // Y no estuvieron cerradas recientemente (cooldown)
+  const fresh = preds.filter(p => {
+    const sig = predictionSignature(p);
+    if (knownPredictions.has(sig)) return false;
+    if (recentlyClosed.has(sig)) {
+      console.log('[Main] Predicción en cooldown de cierre, ignorando:', sig);
+      return false;
+    }
+    return true;
+  });
   console.log('[Main] Predicciones nuevas:', fresh.length);
 
   for (const p of fresh) {
@@ -641,7 +673,8 @@ ipcMain.handle('stop-predictions-monitoring', async () => {
   }
   isPredMonitoring = false;
   knownPredictions = new Set();
-  notifiedPredictions = new Set(); // limpiar para que al reiniciar notifique de nuevo
+  notifiedPredictions = new Set();
+  recentlyClosed = new Map();
   return { success: true };
 });
 

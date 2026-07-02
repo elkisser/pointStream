@@ -168,9 +168,10 @@ function fetchHLTV(url, extractorBody) {
 
 // ---------------- Caches (aceleran re-escaneos y monitoreo) ----------------
 const CACHE_TTL = 15 * 60 * 1000;  // resultados de equipo
+const SEARCH_TTL = 60 * 60 * 1000; // búsqueda de equipo (1 hora)
 const RANK_TTL = 30 * 60 * 1000;   // ranking mundial
 let rankingCache = null, rankingTs = 0;
-const searchCache = new Map();
+const searchCache = new Map(); // key -> { result, ts }
 const resultsCache = new Map();
 
 /**
@@ -223,7 +224,8 @@ async function getRankingMap() {
 async function searchTeam(teamName) {
   const normalized = normalizeTeamName(teamName);
   const ck = normKey(normalized);
-  if (searchCache.has(ck)) return searchCache.get(ck);
+  const cached = searchCache.get(ck);
+  if (cached && Date.now() - cached.ts < SEARCH_TTL) return cached.result;
 
   console.log(`[HLTV] Buscando: "${teamName}" -> "${normalized}"`);
   let resolved = null;
@@ -252,7 +254,7 @@ async function searchTeam(teamName) {
   } catch (err) {
     console.error(`[HLTV] Error buscando ${normalized}:`, err.message);
   }
-  searchCache.set(ck, resolved);
+  searchCache.set(ck, { result: resolved, ts: Date.now() });
   return resolved;
 }
 
@@ -264,15 +266,23 @@ async function resolveTeam(teamName) {
   const key = normKey(normalized);
   const rmap = await getRankingMap();
 
+  // Coincidencia exacta primero
   if (rmap[key]) return { ...rmap[key], name: normalized };
-  // coincidencia parcial sólo con claves largas para evitar falsos positivos
-  if (key.length >= 4) {
+
+  // Coincidencia parcial SOLO si la clave es larga (≥6 chars) para evitar falsos positivos
+  // Ejemplo: "luminosity" incluye "on" que matchea con "mouz" -> INCORRECTO
+  // Solo permitir si la clave del ranking ESTÁ COMPLETAMENTE incluida en la búsqueda
+  if (key.length >= 6) {
     for (const k of Object.keys(rmap)) {
-      if (k.length >= 4 && (k.includes(key) || key.includes(k))) {
-        return { ...rmap[k], name: normalized };
+      if (k.length >= 6 && (k === key.substring(0, k.length) || key === k.substring(0, key.length))) {
+        // Verificar que es un prefijo real, no substring aleatorio
+        if (key.startsWith(k) || k.startsWith(key)) {
+          return { ...rmap[k], name: normalized };
+        }
       }
     }
   }
+
   const s = await searchTeam(normalized);
   return s ? { id: s.id, slug: s.slug, rank: null, name: normalized } : null;
 }

@@ -165,17 +165,61 @@ function parsePredictions(body) {
     }
   }
 
-  // Pool y jugadores
+  // Pool, jugadores y apuesta del usuario
   let pool = '', players = '';
-  for (let i = firstIdx; i < Math.min(lines.length, firstIdx + 30); i++) {
+  let myBet = '', myWin = ''; // "TU JUGADA" y "SI GANÁS"
+  for (let i = firstIdx; i < Math.min(lines.length, firstIdx + 40); i++) {
     const poolM = lines[i].match(/^([\d.,]+)\s*pts$/i);
     if (poolM && !pool) pool = poolM[1];
     if (lines[i].toUpperCase() === 'JUGADORES' && lines[i + 1]?.match(/^\d+$/)) {
       players = lines[i + 1];
     }
+    // "TU JUGADA" → siguiente línea es el monto apostado
+    if (/^TU JUGADA$/i.test(lines[i]) && lines[i + 1]) {
+      myBet = lines[i + 1].replace(/\s*pts?\.?$/i, '').trim();
+    }
+    // "SI GANÁS" o "SI GANAS" → siguiente línea tiene el premio con + delante
+    if (/^SI GAN[AÁ]S?$/i.test(lines[i]) && lines[i + 1]) {
+      myWin = lines[i + 1].trim();
+    }
   }
 
-  return [{ question, closesAt, teams, pool, players, status: 'open' }];
+  return [{ question, closesAt, teams, pool, players, myBet, myWin, status: 'open' }];
+}
+
+/**
+ * Busca predicciones cerradas recientemente en el historial de la página.
+ * Forg1 muestra el resultado después de que cierra: ganador y si ganaste.
+ */
+function parseRecentResults(body) {
+  const lines = body.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const results = [];
+
+  // Buscar secciones de "RESULTADO" o "GANÓ" en el historial
+  for (let i = 0; i < lines.length; i++) {
+    const u = lines[i].toUpperCase();
+    // Indicadores de predicción resuelta
+    if (u === 'GANASTE' || u === 'PERDISTE' || u.includes('GANASTE') || u.includes('PERDISTE')) {
+      const won = u.includes('GANASTE');
+      // Buscar equipo ganador hacia atrás
+      let winner = '';
+      let pointsChange = '';
+      for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
+        if (/^[+\-][\d.,]+\s*pts?/i.test(lines[j])) {
+          pointsChange = lines[j];
+        }
+        if (lines[j].length > 2 && lines[j].length < 30 && /^[A-ZÀ-Ÿa-z]/.test(lines[j])) {
+          winner = lines[j];
+          break;
+        }
+      }
+      if (winner) {
+        results.push({ winner, won, pointsChange });
+      }
+    }
+  }
+
+  return results;
 }
 
 function isLoggedIn(body) {
@@ -229,7 +273,8 @@ async function scrapeForg1Predictions() {
           if (body.length > 1000) {
             clearInterval(poll);
             const predictions = parsePredictions(body);
-            resolve({ ready: true, loggedIn: true, predictions, raw: body.substring(0, 300) });
+            const recentResults = parseRecentResults(body);
+            resolve({ ready: true, loggedIn: true, predictions, recentResults, raw: body.substring(0, 300) });
             return;
           }
         }
