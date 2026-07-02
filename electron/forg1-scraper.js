@@ -71,13 +71,16 @@ function parsePredictions(body) {
     if (!/[A-Za-zÀ-ÿ]/.test(t)) return false;
     if (/^[\d.,%:+\-]+$/.test(t)) return false;
     if (isTimeToken(t)) return false;
-    if (/[./\\@#]/.test(t)) return false;             // no URLs
-    if (/^\d+$/.test(t)) return false;                 // no solo números
+    if (/[./\\@#]/.test(t)) return false;
+    if (/^\d+$/.test(t)) return false;
+    // Excluir "104 JUGADORES", "98 jugadores", etc. (número + JUGADORES)
+    if (/^\d+\s+JUGADORES$/i.test(t)) return false;
+    // Excluir "441.245 PTS", "pts", etc.
+    if (/\bPTS\b/i.test(t)) return false;
     // Excluir usernames de Kick: formato minúsculas con guión bajo (ej: el_kast1)
     if (/^[a-z][a-z0-9_]+$/.test(t) && t.includes('_')) return false;
     const u = t.toUpperCase();
     if (UI_WORDS.has(u)) return false;
-    // Excluir el username detectado
     if (detectedUsername && t.toLowerCase() === detectedUsername) return false;
     return true;
   }

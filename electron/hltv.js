@@ -56,6 +56,10 @@ const TEAM_ALIASES = {
   '9pandas': '9 Pandas',
   'tyloo': 'TYLOO',
   'lynn vision': 'Lynn Vision',
+  'linn vision': 'Lynn Vision',   // typo frecuente del DOM de Forg1
+  'lynnvision': 'Lynn Vision',
+  'luminosity': 'Luminosity',
+  'luminosity gaming': 'Luminosity',
   'aurora': 'Aurora',
   'm80': 'M80',
   'nrg': 'NRG',

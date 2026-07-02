@@ -422,6 +422,7 @@ ipcMain.handle('hltv-connect', async () => {
 let predMonitorInterval = null;
 let isPredMonitoring = false;
 let knownPredictions = new Set();
+let notifiedPredictions = new Set(); // predicciones ya notificadas por Telegram (no repetir)
 
 function predictionSignature(pred) {
   const teams = (pred.teams || [])
@@ -508,22 +509,23 @@ function buildPredictionMessage(pred, a, isNew) {
 }
 
 // Analiza (si hay dos equipos) y envía el aviso por Telegram.
+// Deduplicado: solo notifica UNA VEZ por predicción (firma única).
 async function notifyTelegramForPrediction(pred, isNew) {
-  console.log('[Main] notifyTelegramForPrediction:', { isNew, question: pred?.question, configured: telegram.isConfigured(), enabled: telegram.loadConfig().enabled });
-  
-  if (!telegram.isConfigured()) {
-    console.log('[Main] Telegram no configurado, saltando notificación');
+  if (!telegram.isConfigured()) return;
+  if (!telegram.loadConfig().enabled) return;
+
+  // No repetir la misma predicción
+  const sig = predictionSignature(pred);
+  if (notifiedPredictions.has(sig)) {
+    console.log('[Main] Ya notificada:', sig);
     return;
   }
-  if (!telegram.loadConfig().enabled) {
-    console.log('[Main] Telegram deshabilitado, saltando notificación');
-    return;
-  }
+  notifiedPredictions.add(sig);
+  console.log('[Main] Notificando Telegram:', { isNew, question: pred?.question });
 
   let analysis = null;
   if (pred.teams && pred.teams.length >= 2) {
     try {
-      console.log('[Main] Analizando matchup:', pred.teams[0].name, 'vs', pred.teams[1].name);
       analysis = await analyzeMatchup(pred.teams[0].name, pred.teams[1].name);
     } catch (e) {
       console.error('[Main] Error analizando para aviso:', e.message);
@@ -531,7 +533,6 @@ async function notifyTelegramForPrediction(pred, isNew) {
   }
 
   const msg = buildPredictionMessage(pred, analysis, isNew);
-  console.log('[Main] Enviando mensaje por Telegram...');
   await telegram.sendMessage(msg);
 }
 
@@ -556,6 +557,26 @@ async function runPredictionScan() {
   console.log('[Main] Predicciones encontradas:', preds.length);
   const currentSigs = new Set(preds.map(predictionSignature));
 
+  // Cerradas = estaban antes y ahora desaparecieron
+  if (knownPredictions.size > 0) {
+    for (const sig of knownPredictions) {
+      if (!currentSigs.has(sig)) {
+        console.log('[Main] Predicción cerrada:', sig);
+        // Notificar cierre por Telegram (sin análisis, mensaje simple)
+        if (telegram.isConfigured() && telegram.loadConfig().enabled) {
+          const parts = sig.split('::');
+          const questionPart = parts[0] || 'Predicción';
+          const teamsPart = parts[1] || '';
+          await telegram.sendMessage(
+            `🔒 <b>Predicción cerrada</b>\n<i>${questionPart}</i>${teamsPart ? `\n⚔️ ${teamsPart}` : ''}\n\nYa no se aceptan apuestas.`
+          );
+        }
+        // Limpiar del set de notificadas para que si vuelve a abrir se notifique de nuevo
+        notifiedPredictions.delete(sig);
+      }
+    }
+  }
+
   // Nuevas = están ahora pero no estaban en el ciclo anterior
   const fresh = preds.filter(p => !knownPredictions.has(predictionSignature(p)));
   console.log('[Main] Predicciones nuevas:', fresh.length);
@@ -564,7 +585,6 @@ async function runPredictionScan() {
     const teamsTxt = (p.teams || []).map(t => t.name).join(' vs ');
     console.log('[Main] Nueva predicción detectada:', teamsTxt);
     showNotification('🎯 Nueva predicción CS2', teamsTxt ? `${p.question || 'Predicción'} — ${teamsTxt}` : (p.question || 'Predicción abierta en Forg1'));
-    // Aviso a Telegram con estadística + recomendación
     await notifyTelegramForPrediction(p, true);
   }
 
@@ -621,6 +641,7 @@ ipcMain.handle('stop-predictions-monitoring', async () => {
   }
   isPredMonitoring = false;
   knownPredictions = new Set();
+  notifiedPredictions = new Set(); // limpiar para que al reiniciar notifique de nuevo
   return { success: true };
 });
 
