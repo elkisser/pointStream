@@ -82,21 +82,29 @@ function parsePredictions(body) {
     return true;
   }
 
-  // Porcentaje: número entre 10 y 99 (excluir 1-9 que son contadores del perfil)
+  // Porcentaje: número entre 10% y 99% exactamente (los % de predicción siempre suman ~100)
+  // Excluir números grandes como 236 (contadores de jugadores)
   function isPct(s) {
     const t = (s || '').trim();
-    if (!/^\d{2,3}\s*%?$/.test(t)) return false;
+    // Debe ser exactamente 2 dígitos (o 2 dígitos + %) para ser un porcentaje real
+    if (!/^\d{2}\s*%?$/.test(t)) return false;
     const n = parseInt(t);
     return n >= 10 && n <= 99;
   }
 
   const QKEYS = /gana|ganar|ganador|gane|hace|mata|kill|mapa|\bmap\b|stage|ronda|round|pistol|clutch|mvp|primer|primera|gan[aá]|m[aá]s\s|cu[aá]nt|cu[aá]l|qui[eé]n/i;
 
-  // Buscar pares opción + % (porcentaje ≥ 10%)
+  // Buscar pares opción + % (porcentaje exactamente 2 dígitos: 10%-99%)
   const hits = [];
   for (let i = 0; i < lines.length; i++) {
     if (!isValidOption(lines[i])) continue;
     const n1 = lines[i + 1] || '', n2 = lines[i + 2] || '';
+
+    // Saltar si el número siguiente está seguido de JUGADORES (es un contador, no %)
+    const afterN1 = (lines[i + 2] || '').toUpperCase();
+    const afterN2 = (lines[i + 3] || '').toUpperCase();
+    if (afterN1 === 'JUGADORES' || afterN2 === 'JUGADORES') continue;
+
     let pct = null;
     if (isPct(n1))      pct = parseInt(n1);
     else if (isPct(n2)) pct = parseInt(n2);
