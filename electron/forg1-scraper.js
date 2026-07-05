@@ -226,20 +226,49 @@ function parsePredictions(body) {
 function parseRecentResults(body) {
   const lines = body.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const results = [];
+
   for (let i = 0; i < lines.length; i++) {
     const u = lines[i].toUpperCase();
-    if (u.includes('GANASTE') || u.includes('PERDISTE')) {
-      const won = u.includes('GANASTE');
-      let winner = '', pointsChange = '';
-      for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
-        if (/^[+\-][\d.,]+\s*pts?/i.test(lines[j])) pointsChange = lines[j];
-        if (lines[j].length > 2 && lines[j].length < 30 && /^[A-ZÀ-Ÿa-z]/.test(lines[j]) && !winner) {
-          winner = lines[j];
-        }
+
+    // Detectar "GANASTE" o "PERDISTE" (o variantes con emojis/símbolos)
+    const isWon  = u.includes('GANASTE') || u === '✓ GANASTE' || u === 'GANASTE ✓';
+    const isLost = u.includes('PERDISTE') || u === '✗ PERDISTE' || u === 'PERDISTE ✗';
+
+    if (!isWon && !isLost) continue;
+
+    let winner = '', pointsChange = '';
+
+    // Buscar hacia adelante y atrás para encontrar el ganador y los puntos
+    const searchRange = lines.slice(Math.max(0, i - 15), Math.min(lines.length, i + 10));
+
+    for (const line of searchRange) {
+      // Cambio de puntos: "+9.156 pts", "-5.000 pts", "9.156 pts"
+      if (/^[+\-]?[\d.,]+\s*pts?\.?$/i.test(line) && !pointsChange) {
+        pointsChange = line.startsWith('+') || line.startsWith('-') ? line : (isWon ? '+' + line : '-' + line);
       }
-      if (winner) results.push({ winner, won, pointsChange });
+      // "SI GANÁS" seguido de monto
+      if (/^SI GAN[AÁ]S?$/i.test(line)) continue;
+    }
+
+    // Buscar el equipo ganador: línea de texto corta cerca del indicador
+    for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
+      const l = lines[j];
+      if (l.length > 1 && l.length < 35 &&
+          /^[A-ZÀ-ÿa-z0-9]/.test(l) &&
+          !/^(TU JUGADA|SI GAN|POOL|JUGADORES|CIERRA|LIVE|EN VIVO|POR OPCI)/i.test(l) &&
+          !/^\d+$/.test(l) &&
+          !/^\d+[.,]\d+\s*pts?/i.test(l)) {
+        winner = l;
+        break;
+      }
+    }
+
+    if (isWon || isLost) {
+      console.log(`[Forg1] Resultado: ${isWon ? 'GANASTE' : 'PERDISTE'} | winner="${winner}" | pts="${pointsChange}"`);
+      results.push({ winner, won: isWon, pointsChange });
     }
   }
+
   return results;
 }
 

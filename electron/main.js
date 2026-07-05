@@ -421,16 +421,20 @@ ipcMain.handle('hltv-connect', async () => {
 
 let predMonitorInterval = null;
 let isPredMonitoring = false;
-let knownPredictions = new Set();
+let knownPredictions = new Map();    // sig -> pred completo, para poder usar datos al cerrar
 let notifiedPredictions = new Set(); // predicciones ya notificadas por Telegram (no repetir)
 let recentlyClosed = new Map();      // sig -> timestamp, cooldown 5min para no re-notificar
 
+// La firma se basa SOLO en los equipos ordenados (más estable que incluir la pregunta,
+// ya que el DOM puede cambiar el texto de la pregunta entre ciclos)
 function predictionSignature(pred) {
   const teams = (pred.teams || [])
-    .map(t => (t.name || '').toLowerCase().trim())
+    .map(t => (t.name || '').toLowerCase().trim().replace(/\s+/g, ''))
     .sort()
-    .join(' vs ');
-  return `${(pred.question || '').toLowerCase().trim()}::${teams}`;
+    .join('::');
+  // Fallback: si no hay equipos, usar la pregunta
+  if (!teams) return (pred.question || '').toLowerCase().trim();
+  return teams;
 }
 
 // ----- Telegram: armado y envío de avisos de predicciones -----
@@ -596,41 +600,44 @@ async function runPredictionScan() {
 
   const preds = data.predictions || [];
   console.log('[Main] Predicciones encontradas:', preds.length);
-  const currentSigs = new Set(preds.map(predictionSignature));
+
+  // Mapa actual: sig -> pred
+  const currentMap = new Map(preds.map(p => [predictionSignature(p), p]));
 
   // Cerradas = estaban antes y ahora desaparecieron
-  if (knownPredictions.size > 0) {
-    for (const sig of knownPredictions) {
-      if (!currentSigs.has(sig)) {
-        console.log('[Main] Predicción cerrada:', sig);
-        if (telegram.isConfigured() && telegram.loadConfig().enabled) {
-          const parts = sig.split('::');
-          const questionPart = parts[0] || 'Predicción';
-          const teamsPart = parts[1] || '';
+  for (const [sig, oldPred] of knownPredictions) {
+    if (!currentMap.has(sig)) {
+      console.log('[Main] Predicción cerrada:', sig);
+      if (telegram.isConfigured() && telegram.loadConfig().enabled) {
+        // Usar los datos de la predicción original (antes del cierre)
+        const q = oldPred.question || 'Predicción';
+        const teamsTxt = (oldPred.teams || []).map(t => t.name).join(' vs ');
 
-          // Buscar si hay resultado en el DOM actual
-          const recentResults = data.recentResults || [];
-          const result = recentResults[0]; // el más reciente
+        // Buscar resultado en el DOM actual
+        const recentResults = data.recentResults || [];
+        const result = recentResults[0];
 
-          let msg = `🔒 <b>Predicción cerrada</b>\n<i>${questionPart}</i>`;
-          if (teamsPart) msg += `\n⚔️ ${teamsPart}`;
+        let msg = `🔒 <b>Predicción cerrada</b>`;
+        if (q && q !== 'Predicción abierta') msg += `\n❓ <i>${escTg(q)}</i>`;
+        if (teamsTxt) msg += `\n⚔️ <b>${escTg(teamsTxt)}</b>`;
 
-          if (result) {
-            msg += `\n\n`;
-            if (result.won) {
-              msg += `🏆 <b>¡GANASTE!</b> Ganó: <b>${escTg(result.winner)}</b>`;
-              if (result.pointsChange) msg += `\n💰 <b>${escTg(result.pointsChange)}</b>`;
-            } else {
-              msg += `❌ <b>Perdiste.</b> Ganó: <b>${escTg(result.winner)}</b>`;
-              if (result.pointsChange) msg += `\n💸 ${escTg(result.pointsChange)}`;
-            }
+        if (result) {
+          msg += `\n`;
+          if (result.won) {
+            msg += `\n🏆 <b>¡GANASTE!</b> — Ganó <b>${escTg(result.winner)}</b>`;
+            if (result.pointsChange) msg += `\n💰 <b>${escTg(result.pointsChange)}</b>`;
+          } else {
+            msg += `\n❌ <b>Perdiste.</b> — Ganó <b>${escTg(result.winner)}</b>`;
+            if (result.pointsChange) msg += `\n💸 ${escTg(result.pointsChange)}`;
           }
-
-          await telegram.sendMessage(msg);
+        } else {
+          msg += `\n\nResultado aún no disponible.`;
         }
-        notifiedPredictions.delete(sig);
-        recentlyClosed.set(sig, Date.now()); // cooldown 5 minutos
+
+        await telegram.sendMessage(msg);
       }
+      notifiedPredictions.delete(sig);
+      recentlyClosed.set(sig, Date.now());
     }
   }
 
@@ -640,8 +647,7 @@ async function runPredictionScan() {
     if (Date.now() - ts > CLOSE_COOLDOWN) recentlyClosed.delete(sig);
   }
 
-  // Nuevas = están ahora pero no estaban en el ciclo anterior
-  // Y no estuvieron cerradas recientemente (cooldown)
+  // Nuevas = están ahora pero no estaban en el ciclo anterior y no en cooldown
   const fresh = preds.filter(p => {
     const sig = predictionSignature(p);
     if (knownPredictions.has(sig)) return false;
@@ -660,7 +666,8 @@ async function runPredictionScan() {
     await notifyTelegramForPrediction(p, true);
   }
 
-  knownPredictions = currentSigs;
+  // Guardar mapa completo (sig -> pred) para próximo ciclo
+  knownPredictions = currentMap;
 
   if (mainWindow) {
     mainWindow.webContents.send('predictions-update', {
@@ -684,7 +691,7 @@ ipcMain.handle('start-predictions-monitoring', async (event, config = {}) => {
     if (!data.loggedIn) {
       return { success: false, error: 'not-logged-in' };
     }
-    knownPredictions = new Set((data.predictions || []).map(predictionSignature));
+    knownPredictions = new Map((data.predictions || []).map(p => [predictionSignature(p), p]));
     if (mainWindow) {
       mainWindow.webContents.send('predictions-update', {
         ok: true, loggedIn: true, predictions: data.predictions || [], hasNew: false, newCount: 0
@@ -712,7 +719,7 @@ ipcMain.handle('stop-predictions-monitoring', async () => {
     predMonitorInterval = null;
   }
   isPredMonitoring = false;
-  knownPredictions = new Set();
+  knownPredictions = new Map();
   notifiedPredictions = new Set();
   recentlyClosed = new Map();
   return { success: true };
