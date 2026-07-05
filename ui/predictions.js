@@ -329,18 +329,18 @@ function startCountdowns() {
 
 function renderOneCard(pred, i) {
   const a = pred.analysis;
-  const t1Name = pred.teams[0]?.name || a?.team1?.name || 'Equipo 1';
-  const t2Name = pred.teams[1]?.name || a?.team2?.name || 'Equipo 2';
+  const predType = pred.predType || 'team-matchup';
+  const options = pred.options || pred.teams || [];
+  const t1Name = options[0]?.name || a?.team1?.name || 'Opción 1';
+  const t2Name = options[1]?.name || a?.team2?.name || 'Opción 2';
 
   let html = `<div class="pred-card">`;
 
-  // Header: la pregunta (de qué es la predicción) + cuenta regresiva en vivo
   const secs = parseClock(pred.closesAt);
   const timerHtml = secs != null
     ? `<span class="pred-card-timer" data-countdown="${secs}">cierra en ${fmtClock(secs)}</span>`
     : (pred.closesAt ? `<span class="pred-card-timer">cierra ${esc(pred.closesAt)}</span>` : '');
 
-  // Competencia detectada (sharedEvent viene del análisis HLTV)
   const eventName = a?.sharedEvent || '';
 
   html += `<div class="pred-card-head">
@@ -350,9 +350,10 @@ function renderOneCard(pred, i) {
   ${eventName ? `<div class="pred-card-event">🏆 ${esc(eventName)}</div>` : ''}`;
 
   const hasData = a && a.dataQuality && a.dataQuality !== 'none';
+  const isTeamMatchup = predType === 'team-matchup' || predType === 'ot';
 
-  // RECOMENDACIÓN primero (lo más importante)
-  if (hasData && a.recommendation) {
+  // Recomendación / advertencia según el tipo
+  if (isTeamMatchup && hasData && a.recommendation) {
     const lvl = a.verdictLevel || 'gray';
     const icon = lvl === 'green' ? '✅' : lvl === 'yellow' ? '⚠️' : lvl === 'red' ? '🛑' : 'ℹ️';
     const pick = lvl !== 'gray'
@@ -365,51 +366,80 @@ function renderOneCard(pred, i) {
         <div class="pred-verdict-text">${esc(a.verdict || '')}</div>
       </div>
     </div>`;
-  } else {
-    // Sin datos de HLTV: ser claro, no inventar
+  } else if (predType === 'kills-range') {
+    html += `<div class="pred-verdict gray">
+      <div class="pred-verdict-icon">🎯</div>
+      <div class="pred-verdict-body">
+        <div class="pred-verdict-text">Predicción de kills — no hay stats de HLTV para esto. Guiate por el % de la comunidad.</div>
+      </div>
+    </div>`;
+  } else if (predType === 'yes-no') {
+    html += `<div class="pred-verdict gray">
+      <div class="pred-verdict-icon">🤔</div>
+      <div class="pred-verdict-body">
+        <div class="pred-verdict-text">Predicción de Sí/No — guiate por el % de la comunidad.</div>
+      </div>
+    </div>`;
+  } else if (!isTeamMatchup || !hasData) {
     html += `<div class="pred-verdict gray">
       <div class="pred-verdict-icon">ℹ️</div>
       <div class="pred-verdict-body">
-        <div class="pred-verdict-text">No pude traer estadísticas de HLTV para estos equipos. Tocá <strong>"Conectar HLTV"</strong> una vez, pasá la verificación de Cloudflare, cerrá esa ventana y volvé a escanear. Mientras tanto, guiate por el porcentaje de la comunidad.</div>
+        <div class="pred-verdict-text">Sin estadísticas de HLTV. Tocá <strong>"Conectar HLTV"</strong> una vez, pasá la verificación y volvé a escanear.</div>
       </div>
     </div>`;
   }
 
-  // Probabilidad calculada con estadísticas
-  const p1 = a?.team1?.probability ?? null;
-  const p2 = a?.team2?.probability ?? null;
-  const crowd1 = pred.teams[0]?.percentage || '—';
-  const crowd2 = pred.teams[1]?.percentage || '—';
+  // Visualización de opciones
+  if (predType === 'kills-range' || options.length > 2) {
+    // Múltiples opciones: tabla simple
+    html += `<div class="pred-options-list">`;
+    for (const opt of options) {
+      const pctNum = parseInt(opt.percentage) || 0;
+      html += `<div class="pred-option-row">
+        <span class="pred-option-name">${esc(opt.name)}</span>
+        <div class="pred-option-bar-wrap">
+          <div class="pred-option-bar" style="width:${pctNum}%"></div>
+        </div>
+        <span class="pred-option-pct crowd">${esc(opt.percentage || '—')}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  } else {
+    // Dos opciones: layout VS clásico
+    const p1 = a?.team1?.probability ?? null;
+    const p2 = a?.team2?.probability ?? null;
+    const crowd1 = options[0]?.percentage || '—';
+    const crowd2 = options[1]?.percentage || '—';
 
-  html += `<div class="pred-versus">
-    <div class="pred-vs-team">
-      <div class="pred-vs-name">${esc(t1Name)}</div>
-      <div class="pred-vs-bars">
-        <div class="pred-vs-stat"><span class="lbl">Comunidad</span><span class="val crowd">${esc(crowd1)}</span></div>
-        <div class="pred-vs-stat"><span class="lbl">Stats</span><span class="val hltv">${p1 != null ? p1 + '%' : '—'}</span></div>
+    html += `<div class="pred-versus">
+      <div class="pred-vs-team">
+        <div class="pred-vs-name">${esc(t1Name)}</div>
+        <div class="pred-vs-bars">
+          <div class="pred-vs-stat"><span class="lbl">Comunidad</span><span class="val crowd">${esc(crowd1)}</span></div>
+          <div class="pred-vs-stat"><span class="lbl">Stats</span><span class="val hltv">${p1 != null ? p1 + '%' : '—'}</span></div>
+        </div>
       </div>
-    </div>
-    <div class="pred-vs-mid">VS</div>
-    <div class="pred-vs-team right">
-      <div class="pred-vs-name">${esc(t2Name)}</div>
-      <div class="pred-vs-bars">
-        <div class="pred-vs-stat"><span class="lbl">Comunidad</span><span class="val crowd">${esc(crowd2)}</span></div>
-        <div class="pred-vs-stat"><span class="lbl">Stats</span><span class="val hltv">${p2 != null ? p2 + '%' : '—'}</span></div>
+      <div class="pred-vs-mid">VS</div>
+      <div class="pred-vs-team right">
+        <div class="pred-vs-name">${esc(t2Name)}</div>
+        <div class="pred-vs-bars">
+          <div class="pred-vs-stat"><span class="lbl">Comunidad</span><span class="val crowd">${esc(crowd2)}</span></div>
+          <div class="pred-vs-stat"><span class="lbl">Stats</span><span class="val hltv">${p2 != null ? p2 + '%' : '—'}</span></div>
+        </div>
       </div>
-    </div>
-  </div>`;
-
-  // Barra de probabilidad (stats)
-  if (p1 != null && p2 != null) {
-    html += `<div class="pred-prob-bar">
-      <div class="pred-prob-fill" style="width:${p1}%"></div>
-      <span class="pred-prob-left">${p1}%</span>
-      <span class="pred-prob-right">${p2}%</span>
     </div>`;
+
+    if (p1 != null && p2 != null) {
+      html += `<div class="pred-prob-bar">
+        <div class="pred-prob-fill" style="width:${p1}%"></div>
+        <span class="pred-prob-left">${p1}%</span>
+        <span class="pred-prob-right">${p2}%</span>
+      </div>`;
+    }
   }
 
-  // Stats detalladas
-  if (hasData) {
+  // Stats detalladas (solo para matchups con datos HLTV)
+  if (isTeamMatchup && hasData) {
     const stats = buildStatsRows(a);
     if (stats) {
       html += `<div class="pred-section">

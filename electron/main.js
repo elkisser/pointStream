@@ -440,70 +440,109 @@ function escTg(s) {
 
 // Construye el mensaje HTML para Telegram con la estadística y la recomendación.
 function buildPredictionMessage(pred, a, isNew) {
+  const predType = pred.predType || 'team-matchup';
   const lines = [isNew ? '🆕 <b>Nueva predicción en Forg1</b>' : '⏳ <b>Predicción en curso</b>'];
 
   // Competencia detectada
-  if (a && a.sharedEvent) {
-    lines.push(`🏆 <b>${escTg(a.sharedEvent)}</b>`);
-  }
+  if (a && a.sharedEvent) lines.push(`🏆 <b>${escTg(a.sharedEvent)}</b>`);
 
   if (pred.question) lines.push(`❓ <i>${escTg(pred.question)}</i>`);
 
-  const t1 = pred.teams && pred.teams[0];
-  const t2 = pred.teams && pred.teams[1];
-  if (t1 && t2) {
+  // Mostrar TODAS las opciones (no solo las 2 primeras)
+  const opts = pred.options || pred.teams || [];
+  if (opts.length > 0) {
     lines.push('');
-    lines.push(`🎮 <b>${escTg(t1.name)}</b> vs <b>${escTg(t2.name)}</b>`);
-    lines.push(`👥 Comunidad: ${escTg(t1.percentage || '—')} / ${escTg(t2.percentage || '—')}`);
+    if (predType === 'kills-range') {
+      // Predicción de rangos de kills
+      lines.push(`🎯 <b>Opciones:</b>`);
+      for (const o of opts) {
+        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
+      }
+      lines.push('');
+      lines.push(`👥 <b>Recomendación:</b> guiate por el % de la comunidad.`);
+      lines.push(`ℹ️ Este tipo de predicción no tiene análisis de stats disponible.`);
+    } else if (predType === 'yes-no') {
+      lines.push(`🎯 <b>Opciones:</b>`);
+      for (const o of opts) {
+        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
+      }
+      lines.push('');
+      lines.push(`👥 Sin análisis de stats para esta predicción — guiate por la comunidad.`);
+    } else if (predType === 'ot' && opts.length > 2) {
+      // 3 opciones: equipo A / OT / equipo B
+      lines.push(`🎮 <b>Opciones con OT:</b>`);
+      for (const o of opts) {
+        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
+      }
+      if (a && a.recommendation) {
+        lines.push('');
+        const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : '🛑';
+        lines.push(`${icon} <b>Equipos: ${escTg(a.team1?.name)} vs ${escTg(a.team2?.name)}</b> (sin considerar OT)`);
+        if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
+      }
+    } else if (predType === 'team-matchup' && opts.length === 2) {
+      const t1 = opts[0], t2 = opts[1];
+      lines.push(`🎮 <b>${escTg(t1.name)}</b> vs <b>${escTg(t2.name)}</b>`);
+      lines.push(`👥 Comunidad: ${escTg(t1.percentage || '—')} / ${escTg(t2.percentage || '—')}`);
+
+      if (a && a.dataQuality && a.dataQuality !== 'none' && a.recommendation) {
+        const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : a.verdictLevel === 'red' ? '🛑' : 'ℹ️';
+        lines.push('');
+        lines.push(`${icon} <b>Apostar a: ${escTg(a.recommendation)}</b> (${a.confidence}%)`);
+        if (a.team1?.probability != null && a.team2?.probability != null) {
+          lines.push(`📈 Stats: ${escTg(a.team1.name)} ${a.team1.probability}% · ${escTg(a.team2.name)} ${a.team2.probability}%`);
+        }
+        if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
+
+        const d1 = a.team1?.data, d2 = a.team2?.data;
+        const stat = [];
+        if ((d1?.ranking) || (d2?.ranking)) {
+          stat.push(`• Ranking: ${d1?.ranking ? '#' + d1.ranking : '—'} vs ${d2?.ranking ? '#' + d2.ranking : '—'}`);
+        }
+        if (d1?.winrate != null || d2?.winrate != null) {
+          stat.push(`• Winrate: ${d1?.winrate != null ? d1.winrate + '%' : '—'} vs ${d2?.winrate != null ? d2.winrate + '%' : '—'}`);
+        }
+        if (d1 && d2 && (d1.wins + d1.losses > 0 || d2.wins + d2.losses > 0)) {
+          stat.push(`• Últimos: ${d1.wins}V-${d1.losses}D vs ${d2.wins}V-${d2.losses}D`);
+        }
+        const ev = d1?.event || d2?.event || '';
+        if (ev && (d1?.eventTotal > 0 || d2?.eventTotal > 0)) {
+          const v1 = (d1?.eventTotal > 0) ? `${d1.eventWins}V-${d1.eventLosses}D` : '—';
+          const v2 = (d2?.eventTotal > 0) ? `${d2.eventWins}V-${d2.eventLosses}D` : '—';
+          stat.push(`• ${escTg(ev)}: ${v1} vs ${v2}`);
+        }
+        if (a.h2h?.total > 0) stat.push(`• H2H: ${a.h2h.team1Wins} - ${a.h2h.team2Wins}`);
+        if (stat.length) {
+          lines.push('');
+          lines.push('📊 <b>Estadísticas (HLTV)</b>');
+          lines.push(stat.join('\n'));
+        }
+      } else {
+        lines.push('');
+        lines.push('ℹ️ Sin stats de HLTV — guiate por el % de la comunidad (conectá HLTV).');
+      }
+    } else {
+      // Otro tipo o más de 2 opciones sin clasificar
+      lines.push(`🎯 <b>Opciones:</b>`);
+      for (const o of opts) {
+        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
+      }
+      lines.push('');
+      lines.push(`👥 Guiate por el porcentaje de la comunidad.`);
+    }
   }
 
-  if (a && a.dataQuality && a.dataQuality !== 'none' && a.recommendation) {
-    const lvl = a.verdictLevel || 'gray';
-    const icon = lvl === 'green' ? '✅' : lvl === 'yellow' ? '⚠️' : lvl === 'red' ? '🛑' : 'ℹ️';
+  // Apuesta del usuario si la tiene
+  if (pred.myBet) {
     lines.push('');
-    lines.push(`${icon} <b>Apostar a: ${escTg(a.recommendation)}</b> (${a.confidence}%)`);
-
-    if (a.team1 && a.team2 && a.team1.probability != null && a.team2.probability != null) {
-      lines.push(`📈 Stats: ${escTg(a.team1.name)} ${a.team1.probability}% · ${escTg(a.team2.name)} ${a.team2.probability}%`);
-    }
-    if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
-
-    const d1 = a.team1 && a.team1.data;
-    const d2 = a.team2 && a.team2.data;
-    const stat = [];
-    if ((d1 && d1.ranking) || (d2 && d2.ranking)) {
-      stat.push(`• Ranking: ${d1 && d1.ranking ? '#' + d1.ranking : '—'} vs ${d2 && d2.ranking ? '#' + d2.ranking : '—'}`);
-    }
-    if ((d1 && d1.winrate != null) || (d2 && d2.winrate != null)) {
-      stat.push(`• Winrate: ${d1 && d1.winrate != null ? d1.winrate + '%' : '—'} vs ${d2 && d2.winrate != null ? d2.winrate + '%' : '—'}`);
-    }
-    if (d1 && d2 && (d1.wins + d1.losses > 0 || d2.wins + d2.losses > 0)) {
-      stat.push(`• Últimos: ${d1.wins}V-${d1.losses}D vs ${d2.wins}V-${d2.losses}D`);
-    }
-    const ev = (d1 && d1.event) || (d2 && d2.event) || '';
-    if (ev && ((d1 && d1.eventTotal > 0) || (d2 && d2.eventTotal > 0))) {
-      const v1 = (d1 && d1.eventTotal > 0) ? `${d1.eventWins}V-${d1.eventLosses}D` : '—';
-      const v2 = (d2 && d2.eventTotal > 0) ? `${d2.eventWins}V-${d2.eventLosses}D` : '—';
-      stat.push(`• ${escTg(ev)}: ${v1} vs ${v2}`);
-    }
-    if (a.h2h && a.h2h.total > 0) {
-      stat.push(`• Head to head: ${a.h2h.team1Wins} - ${a.h2h.team2Wins}`);
-    }
-    if (stat.length) {
-      lines.push('');
-      lines.push('📊 <b>Estadísticas (HLTV)</b>');
-      lines.push(stat.join('\n'));
-    }
-  } else if (t1 && t2) {
-    lines.push('');
-    lines.push('ℹ️ Sin estadísticas de HLTV para estos equipos (probá "Conectar HLTV").');
+    lines.push(`💸 Tu apuesta: <b>${escTg(pred.myBet)} pts</b>${pred.myWin ? ` — ganás <b>${escTg(pred.myWin)}</b>` : ''}`);
   }
 
   lines.push('');
   if (pred.closesAt) {
-    lines.push(`⏰ Cierra en ${escTg(pred.closesAt)} — ¡todavía está abierta!`);
+    lines.push(`⏰ Cierra en ${escTg(pred.closesAt)}`);
   } else {
-    lines.push('⏰ Predicción abierta — entrá antes de que cierre.');
+    lines.push('⏰ Predicción abierta');
   }
 
   return lines.join('\n');
@@ -515,17 +554,18 @@ async function notifyTelegramForPrediction(pred, isNew) {
   if (!telegram.isConfigured()) return;
   if (!telegram.loadConfig().enabled) return;
 
-  // No repetir la misma predicción
   const sig = predictionSignature(pred);
   if (notifiedPredictions.has(sig)) {
     console.log('[Main] Ya notificada:', sig);
     return;
   }
   notifiedPredictions.add(sig);
-  console.log('[Main] Notificando Telegram:', { isNew, question: pred?.question });
+  console.log('[Main] Notificando Telegram:', { isNew, predType: pred.predType, question: pred?.question });
 
   let analysis = null;
-  if (pred.teams && pred.teams.length >= 2) {
+  // Solo analizar con HLTV si es un matchup de equipos profesionales
+  const predType = pred.predType || 'team-matchup';
+  if ((predType === 'team-matchup' || predType === 'ot') && pred.teams && pred.teams.length >= 2) {
     try {
       analysis = await analyzeMatchup(pred.teams[0].name, pred.teams[1].name);
     } catch (e) {
