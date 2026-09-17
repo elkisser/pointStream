@@ -154,7 +154,6 @@ async function sendMessage(text, opts = {}) {
 
 function unlink() {
   saveConfig({ chatId: '', enabled: false });
-  pendingCode = null;
   return { ok: true };
 }
 

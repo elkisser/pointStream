@@ -274,18 +274,15 @@ async function startMonitoring() {
     logMessage('⚠️  Agrega al menos un streamer para monitorear', 'warning');
     return;
   }
+
+  elements.toggleMonitorBtn.classList.add('loading');
+  elements.toggleMonitorBtn.innerHTML = `
+    <span class="btn-loader-spinner"></span>
+    Iniciando Monitor...
+  `;
   
   state.isMonitoring = true;
   state.startTime = Date.now();
-  
-  elements.toggleMonitorBtn.innerHTML = `
-    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
-      <path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z"/>
-    </svg>
-    Detener Monitor
-  `;
-  elements.toggleMonitorBtn.classList.remove('btn-success');
-  elements.toggleMonitorBtn.classList.add('btn-danger');
   
   elements.globalStatus.classList.remove('active');
   elements.globalStatus.classList.add('monitoring');
@@ -302,18 +299,46 @@ async function startMonitoring() {
     platform: state.config.platform
   });
   
+  elements.toggleMonitorBtn.classList.remove('loading');
+
   if (result.success) {
+    elements.toggleMonitorBtn.innerHTML = `
+      <span class="btn-status-dot"></span>
+      Detener Monitor
+    `;
+    elements.toggleMonitorBtn.classList.remove('btn-success');
+    elements.toggleMonitorBtn.classList.add('btn-danger');
     logMessage(`✅ Monitoreando ${state.streamers.length} streamer(s)`, 'success');
     startStatsTimer();
   } else {
+    elements.toggleMonitorBtn.innerHTML = `
+      <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+        <path d="M6 4l8 6-8 6V4z"/>
+      </svg>
+      Iniciar Monitor
+    `;
+    elements.toggleMonitorBtn.classList.remove('btn-danger');
+    elements.toggleMonitorBtn.classList.add('btn-success');
     logMessage('❌ Error al iniciar monitoreo', 'error');
     state.isMonitoring = false;
   }
 }
 
 async function stopMonitoring() {
+  elements.toggleMonitorBtn.classList.add('loading');
+  elements.toggleMonitorBtn.innerHTML = `
+    <span class="btn-loader-spinner"></span>
+    Deteniendo Monitor...
+  `;
+
   state.isMonitoring = false;
   
+  elements.globalStatus.classList.remove('monitoring', 'active');
+  elements.globalStatus.querySelector('.status-text').textContent = 'Detenido';
+  
+  const result = await window.kickAPI.stopMonitoring();
+  
+  elements.toggleMonitorBtn.classList.remove('loading');
   elements.toggleMonitorBtn.innerHTML = `
     <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
       <path d="M6 4l8 6-8 6V4z"/>
@@ -322,12 +347,7 @@ async function stopMonitoring() {
   `;
   elements.toggleMonitorBtn.classList.remove('btn-danger');
   elements.toggleMonitorBtn.classList.add('btn-success');
-  
-  elements.globalStatus.classList.remove('monitoring', 'active');
-  elements.globalStatus.querySelector('.status-text').textContent = 'Detenido';
-  
-  const result = await window.kickAPI.stopMonitoring();
-  
+
   if (result.success) {
     logMessage('🛑 Monitor detenido', 'info');
   }

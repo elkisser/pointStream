@@ -4,11 +4,53 @@
 
 let predBusy = false;
 let monitoring = false;
+let forg1Active = false;
+let hltvActive = false;
+
+function updateForg1Btn(loading = false) {
+  const btn = document.getElementById('loginForg1Btn');
+  if (!btn) return;
+  if (loading) {
+    btn.classList.add('loading');
+    btn.innerHTML = `<span class="btn-loader-spinner"></span> Conectando...`;
+    return;
+  }
+  btn.classList.remove('loading');
+  if (forg1Active) {
+    btn.classList.add('active');
+    btn.innerHTML = `<span class="btn-status-dot"></span> 🔑 Forg1 Activo`;
+    btn.title = 'Sesión activa en Forg1';
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = `🔑 Login Forg1`;
+    btn.title = 'Iniciar sesión en Forg1';
+  }
+}
+
+function updateHltvBtn(loading = false) {
+  const btn = document.getElementById('connectHltvBtn');
+  if (!btn) return;
+  if (loading) {
+    btn.classList.add('loading');
+    btn.innerHTML = `<span class="btn-loader-spinner"></span> Conectando HLTV...`;
+    return;
+  }
+  btn.classList.remove('loading');
+  if (hltvActive) {
+    btn.classList.add('active');
+    btn.innerHTML = `<span class="btn-status-dot"></span> 🛡️ HLTV Activo`;
+    btn.title = 'HLTV verificado y conectado';
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = `🛡️ Conectar HLTV`;
+    btn.title = 'Pasar verificación de Cloudflare en HLTV';
+  }
+}
 
 function initPredictions() {
   document.getElementById('scanForg1Btn').addEventListener('click', doScan);
   document.getElementById('loginForg1Btn').addEventListener('click', doLogin);
-  document.getElementById('connectHltvBtn').addEventListener('click', () => window.predictionsAPI.connectHLTV());
+  document.getElementById('connectHltvBtn').addEventListener('click', doConnectHLTV);
   document.getElementById('manualAnalyzeBtn').addEventListener('click', doManual);
   document.getElementById('monitorPredBtn').addEventListener('click', toggleMonitoring);
 
@@ -27,6 +69,32 @@ function initPredictions() {
 
   // Escuchar avisos del monitor de predicciones
   window.predictionsAPI.onUpdate(handleMonitorUpdate);
+
+  // Escuchar actualizaciones de estado de servicios (Forg1 y HLTV)
+  if (window.predictionsAPI.onServicesStatus) {
+    window.predictionsAPI.onServicesStatus((status) => {
+      if (!status) return;
+      if (status.forg1Active != null) {
+        forg1Active = !!status.forg1Active;
+        updateForg1Btn(false);
+      }
+      if (status.hltvActive != null) {
+        hltvActive = !!status.hltvActive;
+        updateHltvBtn(false);
+      }
+    });
+  }
+
+  // Verificación inicial de estado de servicios
+  if (window.predictionsAPI.checkServicesStatus) {
+    window.predictionsAPI.checkServicesStatus().then((s) => {
+      if (!s) return;
+      forg1Active = !!s.forg1Active;
+      hltvActive = !!s.hltvActive;
+      updateForg1Btn(false);
+      updateHltvBtn(false);
+    }).catch(() => {});
+  }
 
   // Configuración de Telegram
   initTelegram();
@@ -139,16 +207,24 @@ async function telegramUnlink() {
 
 // --- Monitoreo de predicciones ---
 async function toggleMonitoring() {
+  const btn = document.getElementById('monitorPredBtn');
   if (monitoring) {
+    if (btn) {
+      btn.classList.add('loading');
+      btn.innerHTML = `<span class="btn-loader-spinner"></span> <span class="pred-mon-label">Deteniendo...</span>`;
+    }
     await window.predictionsAPI.stopMonitoring();
     setMonitoring(false);
     return;
   }
 
-  const btn = document.getElementById('monitorPredBtn');
-  btn.disabled = true;
+  if (btn) {
+    btn.classList.add('loading');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="btn-loader-spinner"></span> <span class="pred-mon-label">Iniciando...</span>`;
+  }
   const res = await window.predictionsAPI.startMonitoring({ interval: 60 });
-  btn.disabled = false;
+  if (btn) btn.disabled = false;
 
   if (res.success) {
     setMonitoring(true);
@@ -157,6 +233,8 @@ async function toggleMonitoring() {
     doScan();
   } else if (res.error === 'not-logged-in') {
     setMonitoring(false);
+    forg1Active = false;
+    updateForg1Btn(false);
     setResults(msgHTML('warning', 'No estás logueado en Forg1', 'Tocá "Login Forg1", iniciá sesión, cerrá esa ventana y volvé a activar el monitoreo.'));
   } else {
     setMonitoring(false);
@@ -167,8 +245,14 @@ async function toggleMonitoring() {
 function setMonitoring(on) {
   monitoring = on;
   const btn = document.getElementById('monitorPredBtn');
+  if (!btn) return;
+  btn.classList.remove('loading');
   btn.classList.toggle('active', on);
-  btn.querySelector('.pred-mon-label').textContent = on ? 'Monitoreando' : 'Monitorear';
+  if (on) {
+    btn.innerHTML = `<span class="btn-status-dot"></span> <span class="pred-mon-label">Monitoreando</span>`;
+  } else {
+    btn.innerHTML = `<span class="pred-mon-dot"></span> <span class="pred-mon-label">Monitorear</span>`;
+  }
 }
 
 // Llega cuando el monitor del backend detecta cambios
@@ -177,6 +261,8 @@ function handleMonitorUpdate(data) {
 
   if (data.loggedIn === false) {
     setMonitoring(false);
+    forg1Active = false;
+    updateForg1Btn(false);
     setResults(`
       <div class="msg msg-warning">
         <div class="msg-icon">⚠️</div>
@@ -207,6 +293,8 @@ async function doScan() {
     const res = await window.predictionsAPI.autoAnalyze();
     if (!res.success) {
       if (res.error === 'not-logged-in') {
+        forg1Active = false;
+        updateForg1Btn(false);
         setResults(`
           <div class="msg msg-warning">
             <div class="msg-icon">⚠️</div>
@@ -222,7 +310,16 @@ async function doScan() {
       return;
     }
 
+    // Forg1 respondió correctamente
+    forg1Active = true;
+    updateForg1Btn(false);
+
     const { predictions } = res.data;
+    if (predictions && predictions.some(p => p.analysis && p.analysis.dataQuality && p.analysis.dataQuality !== 'none')) {
+      hltvActive = true;
+      updateHltvBtn(false);
+    }
+
     if (!predictions || predictions.length === 0) {
       setResults(msgHTML('info', 'No hay predicciones activas', monitoring
         ? 'Te avisaré apenas se abra una nueva predicción en Forg1.'
@@ -253,6 +350,10 @@ async function doManual() {
   try {
     const res = await window.predictionsAPI.analyzeMatch(t1, t2);
     if (res.success) {
+      if (res.data && res.data.dataQuality && res.data.dataQuality !== 'none') {
+        hltvActive = true;
+        updateHltvBtn(false);
+      }
       renderCards([{
         question: `${t1} vs ${t2}`,
         teams: [{ name: res.data.team1.name, percentage: '—' }, { name: res.data.team2.name, percentage: '—' }],
@@ -269,7 +370,43 @@ async function doManual() {
   }
 }
 
-async function doLogin() { await window.predictionsAPI.openForg1Login(); }
+async function doLogin() {
+  updateForg1Btn(true);
+  try {
+    await window.predictionsAPI.openForg1Login();
+  } finally {
+    setTimeout(async () => {
+      if (window.predictionsAPI.checkServicesStatus) {
+        const s = await window.predictionsAPI.checkServicesStatus();
+        if (s) {
+          forg1Active = !!s.forg1Active;
+          updateForg1Btn(false);
+        }
+      } else {
+        updateForg1Btn(false);
+      }
+    }, 1500);
+  }
+}
+
+async function doConnectHLTV() {
+  updateHltvBtn(true);
+  try {
+    await window.predictionsAPI.connectHLTV();
+  } finally {
+    setTimeout(async () => {
+      if (window.predictionsAPI.checkServicesStatus) {
+        const s = await window.predictionsAPI.checkServicesStatus();
+        if (s) {
+          hltvActive = !!s.hltvActive;
+          updateHltvBtn(false);
+        }
+      } else {
+        updateHltvBtn(false);
+      }
+    }, 1500);
+  }
+}
 
 // --- Render ---
 let countdownInterval = null;
@@ -353,7 +490,14 @@ function renderOneCard(pred, i) {
   const isTeamMatchup = predType === 'team-matchup' || predType === 'ot';
 
   // Recomendación / advertencia según el tipo
-  if (isTeamMatchup && hasData && a.recommendation) {
+  if (pred.markets && pred.markets.length > 1) {
+    html += `<div class="pred-verdict gray">
+      <div class="pred-verdict-icon">📋</div>
+      <div class="pred-verdict-body">
+        <div class="pred-verdict-text">Predicción con ${pred.markets.length} mercados activos. Guiate por los porcentajes de la comunidad para cada uno.</div>
+      </div>
+    </div>`;
+  } else if (isTeamMatchup && hasData && a.recommendation) {
     const lvl = a.verdictLevel || 'gray';
     const icon = lvl === 'green' ? '✅' : lvl === 'yellow' ? '⚠️' : lvl === 'red' ? '🛑' : 'ℹ️';
     const pick = lvl !== 'gray'
@@ -389,8 +533,29 @@ function renderOneCard(pred, i) {
     </div>`;
   }
 
-  // Visualización de opciones
-  if (predType === 'kills-range' || options.length > 2) {
+  // Visualización de opciones / mercados
+  if (pred.markets && pred.markets.length > 1) {
+    html += `<div class="pred-multi-markets" style="display:flex;flex-direction:column;gap:12px;margin:12px 0;">`;
+    for (let mi = 0; mi < pred.markets.length; mi++) {
+      const m = pred.markets[mi];
+      const mSelections = m.selections || [];
+      html += `<div class="pred-market-group" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">`;
+      html += `<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:#e0e0e0;">📌 ${esc(m.question)}</div>`;
+      html += `<div class="pred-options-list">`;
+      for (const opt of mSelections) {
+        const pctNum = parseInt(opt.percentage) || 0;
+        html += `<div class="pred-option-row">
+          <span class="pred-option-name">${esc(opt.name || opt.label)}</span>
+          <div class="pred-option-bar-wrap">
+            <div class="pred-option-bar" style="width:${pctNum}%"></div>
+          </div>
+          <span class="pred-option-pct crowd">${esc(opt.percentage || '—')}</span>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    html += `</div>`;
+  } else if (predType === 'kills-range' || options.length > 2) {
     // Múltiples opciones: tabla simple
     html += `<div class="pred-options-list">`;
     for (const opt of options) {
@@ -514,8 +679,14 @@ function statRow(label, v1, v2, better) {
 function setResults(html) { document.getElementById('analysisResults').innerHTML = html; }
 function setBusy(b) {
   const btn = document.getElementById('scanForg1Btn');
+  if (!btn) return;
   btn.disabled = b;
   btn.classList.toggle('loading', b);
+  if (b) {
+    btn.innerHTML = `<span class="btn-loader-spinner"></span> Escaneando...`;
+  } else {
+    btn.innerHTML = `<svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"/></svg> Escanear Forg1`;
+  }
 }
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 

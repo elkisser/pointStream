@@ -48,6 +48,12 @@ contextBridge.exposeInMainWorld('predictionsAPI', {
   getMonitoringStatus: () => ipcRenderer.invoke('get-predictions-monitoring-status'),
   onUpdate: (callback) => {
     ipcRenderer.on('predictions-update', (event, data) => callback(data));
+  },
+
+  // Estado de servicios (Forg1 y HLTV)
+  checkServicesStatus: () => ipcRenderer.invoke('check-services-status'),
+  onServicesStatus: (callback) => {
+    ipcRenderer.on('services-status-update', (event, data) => callback(data));
   }
 });
 

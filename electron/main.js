@@ -1,6 +1,12 @@
-const { app, BrowserWindow, ipcMain, Notification, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, shell, Menu, session } = require('electron');
 const path = require('path');
 const axios = require('axios');
+
+// Deshabilitar aceleración de hardware y sandbox de GPU en Windows para evitar que
+// reCAPTCHA / Cloudflare Turnstile en id.kick.com provoquen crashes de proceso
+// (STATUS_BREAKPOINT / 0x80000003 / exitCode: -2147483645).
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 let mainWindow;
 let monitorInterval = null;
@@ -397,9 +403,48 @@ ipcMain.handle('scrape-forg1-predictions', async () => {
   }
 });
 
+async function checkServicesStatus() {
+  let forg1Active = false;
+  let hltvActive = false;
+
+  try {
+    const forg1Ses = session.fromPartition('persist:forg1');
+    const cookies = await forg1Ses.cookies.get({});
+    forg1Active = cookies.some(c =>
+      c.domain && c.domain.includes('forg1.com') && (
+        c.name.toLowerCase().includes('session') ||
+        c.name.toLowerCase().includes('auth') ||
+        c.name.toLowerCase().includes('token') ||
+        c.name.toLowerCase().includes('connect') ||
+        c.name.toLowerCase().includes('user')
+      )
+    );
+  } catch (e) {}
+
+  try {
+    const hltvSes = session.fromPartition('persist:hltv');
+    const hltvCookies = await hltvSes.cookies.get({ domain: 'hltv.org' });
+    hltvActive = hltvCookies.some(c => c.name === 'cf_clearance' && (!c.expirationDate || c.expirationDate > Date.now() / 1000));
+  } catch (e) {}
+
+  return { forg1Active, hltvActive };
+}
+
+ipcMain.handle('check-services-status', async () => {
+  return await checkServicesStatus();
+});
+
 ipcMain.handle('forg1-login', async () => {
   try {
-    openForg1Login();
+    const win = openForg1Login();
+    if (win && !win.isDestroyed()) {
+      win.on('closed', async () => {
+        const status = await checkServicesStatus();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('services-status-update', status);
+        }
+      });
+    }
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -408,7 +453,15 @@ ipcMain.handle('forg1-login', async () => {
 
 ipcMain.handle('hltv-connect', async () => {
   try {
-    openHLTVConnect();
+    const win = openHLTVConnect();
+    if (win && !win.isDestroyed()) {
+      win.on('closed', async () => {
+        const status = await checkServicesStatus();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('services-status-update', status);
+        }
+      });
+    }
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -425,9 +478,10 @@ let knownPredictions = new Map();    // sig -> pred completo, para poder usar da
 let notifiedPredictions = new Set(); // predicciones ya notificadas por Telegram (no repetir)
 let recentlyClosed = new Map();      // sig -> timestamp, cooldown 5min para no re-notificar
 
-// La firma se basa SOLO en los equipos ordenados (más estable que incluir la pregunta,
-// ya que el DOM puede cambiar el texto de la pregunta entre ciclos)
+// La firma prioriza el ID de Forg1 si existe (estable ante cambios de texto/odds).
+// Fallback: equipos ordenados o la pregunta.
 function predictionSignature(pred) {
+  if (pred.id) return `forg1::${pred.id}`;
   const teams = (pred.teams || [])
     .map(t => (t.name || '').toLowerCase().trim().replace(/\s+/g, ''))
     .sort()
@@ -452,11 +506,23 @@ function buildPredictionMessage(pred, a, isNew) {
 
   if (pred.question) lines.push(`❓ <i>${escTg(pred.question)}</i>`);
 
-  // Mostrar TODAS las opciones (no solo las 2 primeras)
-  const opts = pred.options || pred.teams || [];
-  if (opts.length > 0) {
-    lines.push('');
-    if (predType === 'kills-range') {
+  // Si tiene múltiples mercados, mostrar cada uno con sus selecciones
+  if (pred.markets && pred.markets.length > 1) {
+    for (let mi = 0; mi < pred.markets.length; mi++) {
+      const m = pred.markets[mi];
+      lines.push('');
+      lines.push(`📌 <b>${escTg(m.question)}</b>`);
+      const mOpts = m.selections || [];
+      for (const o of mOpts) {
+        lines.push(`  • ${escTg(o.name || o.label)} — ${escTg(o.percentage || '—')}`);
+      }
+    }
+  } else {
+    // Mercado único: mostrar TODAS las opciones
+    const opts = pred.options || pred.teams || [];
+    if (opts.length > 0) {
+      lines.push('');
+      if (predType === 'kills-range') {
       // Predicción de rangos de kills
       lines.push(`🎯 <b>Opciones:</b>`);
       for (const o of opts) {
@@ -535,6 +601,7 @@ function buildPredictionMessage(pred, a, isNew) {
       lines.push(`👥 Guiate por el porcentaje de la comunidad.`);
     }
   }
+}
 
   // Apuesta del usuario si la tiene
   if (pred.myBet) {

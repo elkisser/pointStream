@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "test": "node --test test/**/*.test.js",
     "icon": "electron build/prepare-icon.js",
     "icon:logo": "node build/generate-icon.js",
     "art": "node build/generate-installer-art.js",

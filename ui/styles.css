@@ -1056,7 +1056,48 @@ body {
   animation: spin 1s linear infinite;
 }
 
+/* ---------- Loaders & Spinners en Botones ---------- */
+.btn-loader-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.btn-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--kick-green, #53fc18);
+  box-shadow: 0 0 8px var(--kick-green, #53fc18);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 0 0 5px var(--kick-green, #53fc18);
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0.8;
+    box-shadow: 0 0 12px var(--kick-green, #53fc18);
+  }
+}
+
 .btn-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.7rem 1.1rem;
   font-size: 0.92rem;
   color: var(--text-primary);
@@ -1067,6 +1108,28 @@ body {
 .btn-login:hover {
   border-color: var(--border-hover);
   background: var(--bg-tertiary);
+}
+
+.btn-login.active,
+.btn-login.connected {
+  border-color: var(--kick-green);
+  color: var(--kick-green);
+  background: rgba(83, 252, 24, 0.07);
+  box-shadow: 0 0 12px rgba(83, 252, 24, 0.15);
+}
+
+.btn-login.active:hover,
+.btn-login.connected:hover {
+  background: rgba(83, 252, 24, 0.13);
+  border-color: var(--kick-green-dark);
+}
+
+.btn-login.loading,
+.btn-monitor.loading,
+.btn-scan.loading,
+.btn-large.loading {
+  pointer-events: none;
+  opacity: 0.85;
 }
 
 /* Botón de monitoreo de predicciones */
@@ -1097,12 +1160,14 @@ body {
 .btn-monitor.active {
   border-color: var(--kick-green);
   color: var(--kick-green);
+  background: rgba(83, 252, 24, 0.07);
+  box-shadow: 0 0 12px rgba(83, 252, 24, 0.15);
 }
 
 .btn-monitor.active .pred-mon-dot {
   background: var(--kick-green);
   box-shadow: 0 0 0 3px var(--kick-green-glow);
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
 /* ---------- Manual ---------- */
