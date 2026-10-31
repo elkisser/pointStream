@@ -93,6 +93,7 @@ function pickPlayerFromSearch(results, query, teamHints = []) {
   if (!list.length) return null;
 
   const qk = nickKey(query);
+  const qd = deleetKey(query);
   const hints = (teamHints || []).map(nickKey).filter(Boolean);
 
   const ranked = list.map((r, i) => {
@@ -101,6 +102,7 @@ function pickPlayerFromSearch(results, query, teamHints = []) {
     const tk = nickKey(r.team);
     let score = 0;
     if (qk && (nk === qk || sk === qk)) score += 100;
+    else if (qd && (deleetKey(r.name) === qd || deleetKey(r.slug) === qd)) score += 95;
     else if (qk && (nk.startsWith(qk) || qk.startsWith(nk)) && Math.min(nk.length, qk.length) >= 3) score += 25;
     if (hints.length && tk && hints.some(h => h === tk || h.includes(tk) || tk.includes(h))) score += 80;
     if (r.team) score += 15;
@@ -314,6 +316,13 @@ function nickKey(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// Nicks con números en lugar de letras: "dev1ce" -> "device", "s1mple" -> "simple",
+// "m0NESY" -> "monesy". HLTV a veces registra la versión con letras.
+function deleetKey(s) {
+  const map = { 0: 'o', 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't' };
+  return nickKey(s).replace(/[013457]/g, d => map[d]);
+}
+
 /** "robo de nemiga" -> { player: "robo", team: "nemiga" } */
 function splitPlayerTeamHint(raw) {
   const s = String(raw || '').replace(/\s+/g, ' ').trim();
@@ -491,6 +500,7 @@ module.exports = {
   scoreKillsDuel,
   emptyKillAnalysis,
   nickKey,
+  deleetKey,
   canonicalMapName,
   selectMapsForContext,
   splitPlayerTeamHint

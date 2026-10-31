@@ -14,7 +14,9 @@ const path = require('path');
 
 const BUILT_IN = {
   huevo: { player: 'buda', team: 'bestia' },
-  biskela: { player: 'aleksib', team: 'natus vincere' }
+  biskela: { player: 'aleksib', team: 'natus vincere' },
+  // Nicks que HLTV registra distinto a como se escriben.
+  dev1ce: { player: 'device', team: null }
 };
 
 const FILE_NAME = 'player-aliases.json';

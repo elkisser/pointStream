@@ -4,6 +4,7 @@ const {
   parsePlayerMatchesFromText,
   pickPlayerFromSearch,
   nickKey,
+  deleetKey,
   splitPlayerTeamHint
 } = require('./player-kills');
 const { resolveAlias } = require('./player-aliases');
@@ -832,6 +833,8 @@ async function getPlayerKillStats(playerName, teamHints = []) {
   // ("HUEVO"), se aclara entre comillas para que se entienda de quién se habla.
   const label = (resolvedName) => {
     if (!alias) return resolvedName || playerName;
+    // "dev1ce" -> device: es el mismo nick escrito distinto, se muestra como vino.
+    if (deleetKey(alias.alias) === deleetKey(alias.player)) return alias.alias;
     const real = alias.player.charAt(0).toUpperCase() + alias.player.slice(1);
     const mentionsReal = nickKey(alias.alias).includes(nickKey(alias.player));
     return mentionsReal ? real : `${real} ("${alias.alias}")`;
@@ -852,10 +855,21 @@ async function getPlayerKillStats(playerName, teamHints = []) {
       }
     }
   }
+  // "dev1ce" -> HLTV lo tiene como "device". Si la búsqueda no trae al jugador
+  // exacto, se busca también la versión con letras y se juntan los resultados.
+  const sameNick = (c) => nickKey(c.name) === nickKey(query) || nickKey(c.slug) === nickKey(query) ||
+    deleetKey(c.name) === deleetKey(query) || deleetKey(c.slug) === deleetKey(query);
+  const lettersOnly = deleetKey(query);
+  if (!(candidates || []).some(sameNick) && lettersOnly !== nickKey(query)) {
+    const more = await searchPlayerCandidates(lettersOnly);
+    if ((more || []).length) {
+      console.log(`[HLTV] "${query}" no apareció; pruebo con "${lettersOnly}"`);
+      const ids = new Set((candidates || []).map(c => c.id));
+      candidates = [...(candidates || []), ...more.filter(c => !ids.has(c.id))];
+    }
+  }
   const picked = pickPlayerFromSearch(candidates, query, hints);
-  const exact = (candidates || []).filter(c =>
-    nickKey(c.name) === nickKey(query) || nickKey(c.slug) === nickKey(query)
-  );
+  const exact = (candidates || []).filter(sameNick);
   const ordered = [];
   const pushUnique = (p) => {
     if (!p || ordered.some(x => x.id === p.id)) return;
