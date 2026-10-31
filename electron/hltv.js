@@ -827,7 +827,14 @@ async function getPlayerKillStats(playerName, teamHints = []) {
   if (parsed.team) hints.push(parsed.team);
   if (alias && alias.team) hints.unshift(alias.team);
   if (alias) console.log(`[HLTV] Sobrenombre "${alias.alias}" -> ${alias.player}${alias.team ? ' (' + alias.team + ')' : ''}`);
-  const label = (resolvedName) => alias ? `${alias.alias} (${resolvedName || alias.player})` : (resolvedName || playerName);
+  // Nombre que se muestra: el nick real. Si la pregunta usó solo el sobrenombre
+  // ("HUEVO"), se aclara entre comillas para que se entienda de quién se habla.
+  const label = (resolvedName) => {
+    if (!alias) return resolvedName || playerName;
+    const real = alias.player.charAt(0).toUpperCase() + alias.player.slice(1);
+    const mentionsReal = nickKey(alias.alias).includes(nickKey(alias.player));
+    return mentionsReal ? real : `${real} ("${alias.alias}")`;
+  };
 
   let candidates = await searchPlayerCandidates(query);
   // "APODO Nick" sin sobrenombre cargado: probar cada palabra (la última primero,
