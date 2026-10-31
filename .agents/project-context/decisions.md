@@ -81,4 +81,64 @@
 **Consecuencia:** Soporte completo de 2, 3, 4+ opciones, múltiples mercados simultáneos, clasificación precisa de tipos, deduplicación estable en monitoreo y renderizado multi-mercado en Telegram y UI.
 **Estado:** IMPLEMENTADO ✔
 
+## DEC-013: Fallback Jerárquico de Estadísticas CS2: HLTV (Primary) → BO3.gg (Fallback) (Fase 4)
+**Decisión:**
+1. Mantener a HLTV como fuente primaria e incorporar a BO3.gg como fallback automático cuando HLTV falla o entrega datos insuficientes (`StatsStatus.INSUFFICIENT` o `FAILED`).
+2. Consumir la API REST pública de BO3.gg (`https://api.bo3.gg/api/v1`) mediante solicitudes HTTPS nativas (`node:https`), sin necesidad de abrir instancias de Chromium adicionales ni generar sobrecarga.
+3. Desacoplar la capa de obtención de datos mediante un contrato común normalizado (`NormalizedCS2Stats`) y una función pura de scoring matemático (`calculateMatchupScoring`), de modo que `analyzeMatchup()` no conozca detalles específicos del proveedor.
+4. Preservar intacta la fórmula matemática existente (pesos, umbrales, bonificaciones y blend 78% datos / 22% base).
+5. Incluir trazabilidad de procedencia (`source: 'hltv' | 'bo3gg'`) en el resultado y reflejar la fuente real en la UI (`Estadísticas (HLTV)` o `Estadísticas (BO3.gg)`) y en los mensajes de Telegram.
+6. Aplicar la política estricta ZERO FAKE DATA: campos no provistos son `null` (nunca `0` engañosos o estimaciones inventadas).
+**Razón:** HLTV sufre frecuentemente de desafíos Cloudflare que requieren interacción manual del usuario. BO3.gg provee datos oficiales de Valve/CS2, rankings mundiales y registros de partidos accesibles por API sin bloqueos, ofreciendo resiliencia inmediata.
+
+## DEC-015: Hardening de Empaquetado, Identidad NSIS y Distribución Segura (Fase 5)
+**Decisión:**
+1. Resolver ISSUE-002 reconstruyendo `build/generate-installer-art.js` para consumir el imagotipo oficial de alta resolución `assets/icon_hd.png` utilizando `nativeImage` de Electron con filtrado bicúbico de alta calidad, generando bitmaps `BI_RGB` de 24 bits (`installerSidebar.bmp` y `installerHeader.bmp`) alineados con la identidad visual corporativa (#53FC18 sobre fondo oscuro #0b0e0f).
+2. Estandarizar nombres de binarios en Windows: ejecutable principal `PointStream.exe` e instalador `PointStream-1.2.0-Setup.exe`.
+3. Activar explícitamente `"asar": true` y optimizar la lista de archivos empaquetados excluyendo `assets/icon_hd.png` (860KB) y `assets/screenshots/**/*`, logrando un bundle `app.asar` limpio de 2.4 MB con solo archivos de producción.
+4. Establecer `deleteAppDataOnUninstall: false` para salvaguardar la sesión de Forg1 y la configuración de Telegram ante desinstalaciones accidentales o actualizaciones.
+5. Política estricta de firma y SmartScreen: no generar certificados autofirmados engañosos en producción. Documentar con total transparencia el estado `NotSigned` cuando no exista credencial en el almacén de certificados ni en variables de entorno, y no implementar ningún mecanismo de evasión de antivirus o manipulación de Defender.
+**Razón:** Proveer una experiencia de instalación profesional, segura y coherente con la identidad visual de PointStream sin sobrecargar el bundle ni alterar la lógica funcional.
+**Estado:** IMPLEMENTADO ✔
+
+## DEC-014: Semántica de Ciclo de Vida de Predicciones Forg1 (Fase 4.1)
+**Decisión:**
+1. Mapear formalmente el ciclo de vida a cuatro estados canónicos: `OPEN`, `WAITING_RESULT`, `RESOLVED` y `UNKNOWN`.
+2. Tratar las predicciones cerradas (`"Esperando ganador"`, `"Predicción cerrada. Esperando resultado"`, `locked`, `closed`, o con `locksAt` en el pasado) como `WAITING_RESULT`.
+3. Establecer inequívocamente que `CLOSED != RESOLVED`: una predicción en `WAITING_RESULT` no admite apuestas ni genera nuevas alertas de recomendación, pero tampoco infiere un ganador anticipado (`result = null`).
+4. Solo clasificar como `RESOLVED` cuando Forg1 declare un estado finalizado oficial (`resolved`, `finished`, `completed`, `winning_outcome_id`). Extraer el ganador oficial únicamente si está explícito.
+5. Clasificar cualquier estado ambiguo o no reconocido como `UNKNOWN` (Zero Fake Data: nunca asumir abierto ni resuelto).
+6. Preservar la identidad estable `forg1::<id>` a través de todas las transiciones para evitar duplicados en memoria o falsas alertas al cambiar de estado.
+**Razón:** La observación funcional en Forg1 demostró que los estados de bloqueo ("Esperando ganador") eran leídos como predicciones abiertas o generaban duplicación al cerrarse, confundiéndose con eventos apostables o forzando adivinaciones de resultados.
+**Consecuencia:** Monitoreo limpio y predecible, badges claros en UI, mensajes apropiados en Telegram y cero inferencias falsas de ganadores.
+## DEC-016: Extracción Estructurada y Filtrado de Identidad para H2H en HLTV (Fase 6)
+**Decisión:**
+1. Reemplazar la extracción sobre `innerText` y regex global en `getH2H()` por un extractor DOM estructurado inyectado vía `extractorBody` en `fetchHLTV`.
+2. Extraer selectores específicos de HLTV: `.result-con`, `a[href*="/matches/"]` (para `matchId`), `.team` (para nombres), `.result-score` (para scores) y `.event-name` / `.event` (para evento).
+3. Implementar la función pura `parseH2HMatches(rawMatches, team1Name, team2Name)` encargada de normalizar nombres (`normKey(normalizeTeamName(...))`) y validar la identidad estricta de ambos equipos.
+4. Descartar completamente cualquier partido donde participe un tercer rival ajeno (solucionando el comportamiento de HLTV donde `?team=A&team=B` lista partidos de A contra terceros y B contra terceros).
+5. Manejar simétricamente la inversión de equipos (`team1 vs team2` y `team2 vs team1`), orientando el puntaje al contendiente adecuado sin importar el orden local/visitante.
+6. Deduplicar partidos por `matchId` para neutralizar elementos responsive repetidos en el DOM de HLTV.
+7. Distinguir el estado `EMPTY` (0 partidos directos encontrados) de `FAILED` (error de red o Cloudflare), preservando 100% el contrato `{ total, team1Wins, team2Wins }` y la matemática de scoring (+4 pts por victoria) en `cs2-stats-service.js`.
+**Razón:** Eliminar falsos positivos masivos provocados por la captura indiscriminada de partidos de terceros y fechas, garantizando Zero Fake Data en el cálculo de estadísticas de CS2.
+## DEC-017: Persistencia de Configuración Local y Recuperación de Estado (Fase 7)
+**Decisión:**
+1. Crear el módulo `electron/config-store.js` responsable de la persistencia de configuración del usuario en `app.getPath('userData')/config.json`.
+2. Emplear un esquema con versión explícita (`version: 1`), conteniendo `streamers` (array de strings) y `config` (`platform`, `interval`, `autoOpen`, `notifications`, `minimize`).
+3. Aplicar escritura atómica (archivo temporal `.tmp` + rename / reemplazo) para evitar archivos a medio escribir o corruptos ante cierres abruptos de la aplicación.
+4. Implementar recuperación ante fallos: si `config.json` se encuentra corrupto, se genera automáticamente una copia diagnóstica `config.json.bak` y se cargan los defaults seguros sin crashear el proceso.
+5. Mantener la frontera de seguridad IPC (`config-get`, `config-save`, `config-reset`) a través de `preload.js` (`window.configAPI`), con el proceso principal como único custodio de las operaciones de filesystem (`contextIsolation: true`, `nodeIntegration: false`).
+6. Validación estricta y sanitización de tipos: descartar prototype pollution (`__proto__`, `constructor`), limitar a 100 streamers con caracteres válidos y clampear intervalos entre 30 y 300 segundos.
+7. Cero persistencia de secretos: se prohíbe explícitamente almacenar contraseñas, tokens de Telegram, cookies de sesión de Kick/Forg1/HLTV o estados temporales de runtime (`isMonitoring` permanece `false` al iniciar para prevenir ejecuciones sorpresa).
+**Razón:** Resolver ISSUE-005 permitiendo al usuario conservar sus streamers y preferencias entre sesiones, con máxima robustez, cero pérdida de datos y respeto a la arquitectura de seguridad existente.
+## DEC-018: Series Identity Is Independent From Prediction Identity (Fase 9.1)
+**Decisión:**
+1. Separar estrictamente `predictionId` (`forg1::<id>`) de `mapSignature` (`${seriesId}_map_${mapNumber}`) y `seriesId` (`${teamA}_vs_${teamB}_${date}`).
+2. Cerrar una predicción (`PredictionStatus.WAITING_RESULT` o cierre en Forg1) NUNCA finaliza la serie. La serie transiciona a `WAITING_NEXT_MAP` y solo finaliza (`SERIES_STATUS.FINISHED`) cuando existe evidencia matemática de que se alcanzó el objetivo del formato (ej. 2 victorias en BO3, 3 en BO5, 1 en BO1).
+3. Modificar la lógica de cooldown en `electron/main.js` (`recentlyClosed`): el cooldown de una predicción cerrada opera únicamente sobre la identidad de esa predicción específica, impidiendo que bloquee el inicio del Mapa 2 de la misma serie.
+4. Establecer `electron/series-tracker.js` como módulo responsable de mantener la continuidad deportiva en memoria de ejecución (runtime), purgando series finalizadas tras 30 minutos de retención.
+5. Política estricta ZERO FAKE DATA: Si una predicción no presenta dos equipos válidos, `seriesId = null`. Si el formato no está explícito, permanece `UNKNOWN`. Si el número de mapa no está explícito, permanece `null`. Prohibido inventar ganadores o scores.
+**Razón:** Resolver el bloqueo entre mapas en series BO3/BO5, evitando que PointStream descarte la predicción del Mapa 2 o pierda el marcador y contexto acumulado de la serie.
+**Estado:** IMPLEMENTADO ✔
+
 

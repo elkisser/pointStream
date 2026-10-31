@@ -66,3 +66,11 @@ contextBridge.exposeInMainWorld('telegramAPI', {
   unlink: () => ipcRenderer.invoke('telegram-unlink'),
   test: () => ipcRenderer.invoke('telegram-test')
 });
+
+// API de Configuración Local y Streamers (Fase 7)
+contextBridge.exposeInMainWorld('configAPI', {
+  getConfig: () => ipcRenderer.invoke('config-get'),
+  saveConfig: (data) => ipcRenderer.invoke('config-save', data),
+  resetConfig: () => ipcRenderer.invoke('config-reset')
+});
+

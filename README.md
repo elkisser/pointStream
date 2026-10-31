@@ -11,13 +11,13 @@
 <br/>
 
 [![License](https://img.shields.io/badge/LICENSE-MIT-53FC18?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/VERSION-1.1.0-blue?style=flat-square)](https://github.com/elkisser/pointStream/releases)
+[![Version](https://img.shields.io/badge/VERSION-1.3.0-blue?style=flat-square)](https://github.com/elkisser/pointStream/releases)
 [![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS%2010%20%7C%2011-0078D6?style=flat-square)](https://github.com/elkisser/pointStream/releases)
 [![Status](https://img.shields.io/badge/STATUS-PRODUCTION%20READY-green?style=flat-square)](https://github.com/elkisser/pointStream)
 
 <br/>
 
-### [⬇️ DESCARGAR AHORA](https://github.com/elkisser/pointStream/releases/download/v1.1.0/pointStream-Setup-1.0.0.exe) • [Ver Cambios](https://github.com/elkisser/pointStream/releases) • [GitHub](https://github.com/elkisser/pointStream)
+### [⬇️ DESCARGAR AHORA](https://github.com/elkisser/pointStream/releases/download/v1.4.0/PointStream-1.4.0-Setup.exe) • [Ver Cambios](CHANGELOG.md) • [GitHub](https://github.com/elkisser/pointStream)
 
 </div>
 
@@ -205,11 +205,11 @@ Agrega tus streamers favoritos y disfruta
 
 <div align="center">
 
-### 🎁 Última Versión: v1.1.0
+### 🎁 Última Versión: v1.4.0
 
-[![Download pointStream](https://img.shields.io/badge/⬇️%20DESCARGAR%20AHORA-53FC18?style=flat-square&logoColor=white&labelColor=000)](https://github.com/elkisser/pointStream/releases/download/v1.1.0/pointStream-Setup-1.0.0.exe)
+[![Download pointStream](https://img.shields.io/badge/⬇️%20DESCARGAR%20AHORA-53FC18?style=flat-square&logoColor=white&labelColor=000)](https://github.com/elkisser/pointStream/releases/download/v1.4.0/PointStream-1.4.0-Setup.exe)
 
-**Tamaño:** ~80 MB • **Windows 10+** • **Sin instalación complicada**
+**Tamaño:** ~80 MB • **Windows 10+** • **Se instala sin permisos de administrador**
 
 ✅ Totalmente gratis • ✅ Sin anuncios • ✅ Sin cuenta requerida
 
@@ -217,12 +217,35 @@ Agrega tus streamers favoritos y disfruta
 
 ---
 
-## 🎁 Novedades v1.1.0
+## 🛡️ ¿Windows dice que el archivo es peligroso?
 
-- ✅ **Telegram integration fixed** — conecta tu bot sin códigos
-- ✅ **UI redesigned** — estilos modernos con gradients y transiciones  
-- ✅ **Robustness** — detección más confiable de predicciones
-- ✅ **Performance** — caché mejorada de estadísticas
+PointStream es código abierto y no contiene virus. El aviso aparece porque el instalador **no está firmado digitalmente** con un certificado pago y todavía lo bajó poca gente. Windows avisa lo mismo con cualquier programa nuevo de un desarrollador independiente.
+
+**Si aparece "Windows protegió tu PC" (SmartScreen):** tocá **Más información** → **Ejecutar de todas formas**.
+
+**Para comprobar que bajaste el archivo original**, compará su hash con el `SHA256SUMS.txt` publicado en el release:
+
+```powershell
+Get-FileHash .\PointStream-1.4.0-Setup.exe -Algorithm SHA256
+```
+
+Si los dos códigos coinciden, el archivo es exactamente el que se compiló desde este repositorio. También podés subirlo a [VirusTotal](https://www.virustotal.com/) para revisarlo con más de 70 antivirus.
+
+**Qué hace y qué no hace el instalador:**
+- Se instala en tu usuario (`%LOCALAPPDATA%\Programs\PointStream`) y no pide permisos de administrador.
+- No instala servicios, drivers ni tareas programadas, y no modifica el sistema.
+- Se desinstala desde *Configuración → Aplicaciones* como cualquier programa.
+
+---
+
+## 🎁 Novedades v1.4.0
+
+- ✅ **Stats que no fallan** — si HLTV no responde, usa BO3.gg y después el ranking oficial de Valve (desde GitHub, con copia offline)
+- ✅ **Card de pick nueva** — a quién apostar, probabilidad y si el pago conviene
+- ✅ **Telegram arreglado** — vinculación confiable y solo avisa predicciones abiertas
+- ✅ **Instalador nuevo** — con la identidad visual de la app y en español
+
+Ver el detalle completo en el [CHANGELOG](CHANGELOG.md).
 
 ---
 
@@ -247,7 +270,7 @@ Agrega tus streamers favoritos y disfruta
    ↓
 2. pointStream extrae equipos
    ↓
-3. Busca datos en HLTV (ranking, forma, H2H)
+3. Busca datos en HLTV → BO3.gg → ranking de Valve (ranking, forma, H2H)
    ↓
 4. Calcula recomendación
    ↓
@@ -259,8 +282,8 @@ Agrega tus streamers favoritos y disfruta
 ## 🔐 Privacidad y Seguridad
 
 ✅ **Código abierto** — Audita el código en GitHub  
-✅ **Datos locales** — Nada se envía a servidores externos  
-✅ **Sin tokens almacenados** — Bot de Telegram ofuscado (para la comunidad)  
+✅ **Datos locales** — Tu configuración y tu chat de Telegram se guardan solo en tu PC  
+✅ **Conexiones conocidas** — Kick, Twitch, Forg1, HLTV, BO3.gg, GitHub (ranking de Valve) y Telegram, nada más  
 ✅ **Libre de spyware** — Ningún rastreador, ningún telemetría  
 ✅ **Licencia MIT** — Usa, modifica y distribuye libremente
 
@@ -322,8 +345,8 @@ Distribuido bajo la licencia **MIT**. Libre de usar, modificar y distribuir.
 
 💚 **Hecho para la comunidad de Kick, Twitch y CS2**
 
-### [⬇️ DESCARGA AHORA](https://github.com/elkisser/pointStream/releases/download/v1.1.0/pointStream-Setup-1.0.0.exe) • [GitHub](https://github.com/elkisser/pointStream) • [Releases](https://github.com/elkisser/pointStream/releases)
+### [⬇️ DESCARGA AHORA](https://github.com/elkisser/pointStream/releases/download/v1.4.0/PointStream-1.4.0-Setup.exe) • [GitHub](https://github.com/elkisser/pointStream) • [Releases](https://github.com/elkisser/pointStream/releases)
 
-**Versión 1.1.0 • 100% Libre • Sin publicidad • Windows 10+**
+**Versión 1.4.0 • 100% Libre • Sin publicidad • Windows 10+**
 
 </div>

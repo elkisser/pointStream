@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  PredictionStatus,
+  normalizePredictionStatus,
   parsePredictionFromState,
   parsePredictionsFromText,
   classifyPrediction
@@ -293,8 +295,8 @@ test('Caso K — Mismo mercado con cambios de odds/estado conserva identidad', (
   const p2 = parsePredictionFromState(state2)[0];
 
   assert.equal(p1.id, p2.id);
-  assert.equal(p1.status, 'open');
-  assert.equal(p2.status, 'locked');
+  assert.equal(p1.status, 'OPEN');
+  assert.equal(p2.status, 'WAITING_RESULT');
   assert.equal(p1.markets[0].selections[0].percentage, '50%');
   assert.equal(p2.markets[0].selections[0].percentage, '80%');
 });
@@ -328,3 +330,174 @@ CIERRA 15:30
   assert.equal(p.markets[1].question, '¿Cuántas mata apEX?');
   assert.equal(p.markets[1].selections.length, 4);
 });
+
+// ============================================================================
+// FASE 4.1 — TESTS DE SEMÁNTICA Y CICLO DE VIDA (OPEN, WAITING_RESULT, RESOLVED, UNKNOWN)
+// ============================================================================
+
+test('Fase 4.1 — Test 1: Predicción con status "open" se normaliza a OPEN', () => {
+  assert.equal(normalizePredictionStatus('open'), PredictionStatus.OPEN);
+  assert.equal(normalizePredictionStatus('active'), PredictionStatus.OPEN);
+  assert.equal(normalizePredictionStatus('live'), PredictionStatus.OPEN);
+
+  const state = {
+    prediction: {
+      id: 'pred-open-1',
+      title: '¿Quién gana?',
+      status: 'open',
+      locks_at: new Date(Date.now() + 600000).toISOString(),
+      outcomes: [
+        { id: '1', label: 'A', total_points: 100 },
+        { id: '2', label: 'B', total_points: 100 }
+      ]
+    }
+  };
+  const parsed = parsePredictionFromState(state);
+  assert.equal(parsed[0].status, PredictionStatus.OPEN);
+});
+
+test('Fase 4.1 — Test 2: "Esperando ganador" se clasifica como WAITING_RESULT', () => {
+  // Desde string de status o desde contexto de texto
+  assert.equal(normalizePredictionStatus('esperando ganador'), PredictionStatus.WAITING_RESULT);
+  assert.equal(normalizePredictionStatus('', 'Esperando ganador'), PredictionStatus.WAITING_RESULT);
+  assert.equal(normalizePredictionStatus('', 'Partida en juego. Esperando ganador...'), PredictionStatus.WAITING_RESULT);
+
+  const textWithWaitingWinner = `
+PREDICCIONES
+¿Quién gana el mapa 1?
+Bestia
+60%
+CLANSBRS
+40%
+Esperando ganador
+  `;
+  const preds = parsePredictionsFromText(textWithWaitingWinner);
+  assert.equal(preds.length, 1);
+  assert.equal(preds[0].status, PredictionStatus.WAITING_RESULT);
+});
+
+test('Fase 4.1 — Test 3: "Predicción cerrada. Esperando resultado" se clasifica como WAITING_RESULT', () => {
+  assert.equal(normalizePredictionStatus('locked'), PredictionStatus.WAITING_RESULT);
+  assert.equal(normalizePredictionStatus('closed'), PredictionStatus.WAITING_RESULT);
+  assert.equal(normalizePredictionStatus('', 'Predicción cerrada. Esperando resultado'), PredictionStatus.WAITING_RESULT);
+
+  const textWithClosedWaiting = `
+PREDICCIONES
+¿Quién gana el mapa 1?
+Bestia
+55%
+CLANSBRS
+45%
+Predicción cerrada. Esperando resultado
+  `;
+  const preds = parsePredictionsFromText(textWithClosedWaiting);
+  assert.equal(preds.length, 1);
+  assert.equal(preds[0].status, PredictionStatus.WAITING_RESULT);
+});
+
+test('Fase 4.1 — Test 4: Predicción resuelta se clasifica como RESOLVED y extrae resultado real', () => {
+  assert.equal(normalizePredictionStatus('resolved'), PredictionStatus.RESOLVED);
+  assert.equal(normalizePredictionStatus('completed'), PredictionStatus.RESOLVED);
+  assert.equal(normalizePredictionStatus('finished'), PredictionStatus.RESOLVED);
+
+  const state = {
+    prediction: {
+      id: 'pred-res-1',
+      title: 'Ganador de la serie',
+      status: 'resolved',
+      winning_outcome_id: 'opt-vitality',
+      outcomes: [
+        { id: 'opt-vitality', label: 'Vitality', total_points: 75000 },
+        { id: 'opt-g2', label: 'G2', total_points: 25000 }
+      ]
+    }
+  };
+  const parsed = parsePredictionFromState(state);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].status, PredictionStatus.RESOLVED);
+  assert.equal(parsed[0].result, 'Vitality');
+});
+
+test('Fase 4.1 — Test 5: Estado no reconocido se clasifica como UNKNOWN (Zero Fake Data)', () => {
+  assert.equal(normalizePredictionStatus('something-new-unrecognized'), PredictionStatus.UNKNOWN);
+  assert.equal(normalizePredictionStatus(''), PredictionStatus.UNKNOWN);
+  assert.equal(normalizePredictionStatus(null), PredictionStatus.UNKNOWN);
+
+  const state = {
+    prediction: {
+      id: 'pred-unknown-1',
+      title: 'Predicción misteriosa',
+      status: 'custom_bizarre_state',
+      outcomes: [
+        { id: '1', label: 'A', total_points: 10 },
+        { id: '2', label: 'B', total_points: 10 }
+      ]
+    }
+  };
+  const parsed = parsePredictionFromState(state);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].status, PredictionStatus.UNKNOWN);
+  assert.notEqual(parsed[0].status, PredictionStatus.OPEN, 'Un estado desconocido jamás debe asumirse OPEN');
+  assert.notEqual(parsed[0].status, PredictionStatus.RESOLVED, 'Un estado desconocido jamás debe asumirse RESOLVED');
+});
+
+test('Fase 4.1 — Test 6: ZERO FAKE DATA — WAITING_RESULT sin ganador conserva result === null', () => {
+  const state = {
+    prediction: {
+      id: 'pred-waiting-no-fake',
+      title: '¿Quién gana?',
+      status: 'locked',
+      outcomes: [
+        { id: 'opt-1', label: 'Favorito Comunidad', total_points: 90000 },
+        { id: 'opt-2', label: 'Underdog', total_points: 10000 }
+      ]
+    }
+  };
+  const parsed = parsePredictionFromState(state);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].status, PredictionStatus.WAITING_RESULT);
+  assert.strictEqual(parsed[0].result, null, 'El resultado en WAITING_RESULT debe ser null, no adivinado por porcentajes');
+});
+
+test('Fase 4.1 — Test 7: Transición temporal por locksAt en el pasado convierte a WAITING_RESULT', () => {
+  const pastTime = new Date(Date.now() - 30000).toISOString(); // expiró hace 30s
+  const state = {
+    prediction: {
+      id: 'pred-expired-lock',
+      title: '¿Quién gana?',
+      status: 'open', // La API decía open pero locks_at ya pasó
+      locks_at: pastTime,
+      outcomes: [
+        { id: '1', label: 'A', total_points: 50 },
+        { id: '2', label: 'B', total_points: 50 }
+      ]
+    }
+  };
+  const parsed = parsePredictionFromState(state);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].status, PredictionStatus.WAITING_RESULT);
+});
+
+test('Fase 4.1 — Test 8: Identidad y deduplicación idéntica a través de transiciones de ciclo', () => {
+  const predId = 'uuid-pred-lifecycle-123';
+  const openState = {
+    prediction: { id: predId, title: 'Team 1 vs Team 2', status: 'open', outcomes: [{ id: '1', label: 'T1' }, { id: '2', label: 'T2' }] }
+  };
+  const waitingState = {
+    prediction: { id: predId, title: 'Team 1 vs Team 2', status: 'locked', outcomes: [{ id: '1', label: 'T1' }, { id: '2', label: 'T2' }] }
+  };
+  const resolvedState = {
+    prediction: { id: predId, title: 'Team 1 vs Team 2', status: 'resolved', winning_outcome_id: '1', outcomes: [{ id: '1', label: 'T1' }, { id: '2', label: 'T2' }] }
+  };
+
+  const pOpen = parsePredictionFromState(openState)[0];
+  const pWaiting = parsePredictionFromState(waitingState)[0];
+  const pResolved = parsePredictionFromState(resolvedState)[0];
+
+  assert.equal(pOpen.id, predId);
+  assert.equal(pWaiting.id, predId);
+  assert.equal(pResolved.id, predId);
+  assert.equal(`forg1::${pOpen.id}`, `forg1::${pWaiting.id}`);
+  assert.equal(`forg1::${pWaiting.id}`, `forg1::${pResolved.id}`);
+});
+

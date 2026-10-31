@@ -25,10 +25,10 @@
 
 ---
 
-## electron/hltv.js (23.3KB, 625 líneas)
-**Responsabilidad:** Scraping de HLTV con Cloudflare bypass.
+## electron/hltv.js (~25KB, 699 líneas)
+**Responsabilidad:** Scraping de HLTV con Cloudflare bypass y extracción estructurada de H2H.
 **Dependencias:** electron BrowserWindow (persist:hltv)
-**Expone:** `analyzeMatchup`, `searchTeam`, `normalizeTeamName`, `openHLTVConnect`
+**Expone:** `analyzeMatchup`, `getMatchupData`, `searchTeam`, `normalizeTeamName`, `openHLTVConnect`, `getH2H`, `parseH2HMatches`
 
 **Caches en memoria (se pierden al reiniciar):**
 - `rankingCache` — ranking mundial, TTL 30min
@@ -40,11 +40,19 @@
 2. `getRankingMap()` — ranking top (rápido, da rank #)
 3. `searchTeam()` — búsqueda en HLTV (lento, fallback)
 
+**Head-to-Head Estructurado (Fase 6):**
+- Inyección DOM vía `extractorBody` en `fetchHLTV` sobre `https://www.hltv.org/results?team=A&team=B`.
+- Extracción de `.result-con`, `matchId` de `a[href*="/matches/"]`, `.team`, `.result-score`, `.event-name`.
+- `parseH2HMatches`: Validación de identidad estricta bidireccional (`normKey`).
+- Filtrado total de partidos contra terceros arrojados por el operador OR de la URL de HLTV.
+- Soporte para inversión de local/visitante, deduplicación canónica por `matchId`, series BO3/BO5 y distinción entre `EMPTY` y `FAILED`.
+
 **Scoring de matchup:**
+- Delegado a `cs2-stats-service.js` con fallback a BO3.gg.
 - Ranking mundial → hasta ±25 puntos
 - Winrate reciente → hasta ±14 puntos
 - Forma en competencia → hasta ±18 puntos
-- Head to head → 4 pts × victoria
+- Head to head → 4 pts × victoria (fórmula preservada 100% intacta)
 - Blend: 78% datos / 22% base (50/50)
 - Clampeo: 15% mín, 85% máx
 
@@ -63,6 +71,7 @@
 **Estrategia de scraping y parsing (Fase 3):**
 - **Fuente Principal:** Consume el endpoint interno `/api/predictions/state` mediante `fetch` dentro de la ventana de sesión autenticada `persist:forg1`.
 - **Estructura de Dominio:** Modela fielmente `Prediction -> markets[] -> selections[]` preservando IDs estables, puntos, apostadores y colores.
+- **Ciclo de vida canónico (Fase 4.1):** `PredictionStatus` (`OPEN`, `WAITING_RESULT`, `RESOLVED`, `UNKNOWN`) normalizado mediante `normalizePredictionStatus`. Distingue inequívocamente predicciones cerradas para apostar (`WAITING_RESULT`) de predicciones resueltas (`RESOLVED`). ZERO FAKE DATA en resultados (`result = null` si no hay ganador oficial).
 - **Parser de Fallback:** Parser de texto plano (`parsePredictionsFromText`) que detecta múltiples preguntas/mercados y agrupa sus selecciones sin aplanar.
 - **Clasificador dinámico:** `classifyPrediction` identifica `team-matchup`, `kills-range`, `ot`, `yes-no`, `map`, `other`.
 - **UI_WORDS:** set de 50+ palabras de navegación para filtrar ruido en fallback.
@@ -92,6 +101,57 @@
 **Persistencia:** `{userData}/telegram-config.json` → `{ chatId, enabled }`
 **Vinculación:** deep link → t.me/bot?start=link → polling getUpdates → primer /start recibido
 **Bug conocido:** `unlink()` referencia `pendingCode` que no existe en este scope (línea 157)
+
+---
+
+## electron/config-store.js (Nuevo en Fase 7)
+**Responsabilidad:** Almacenamiento seguro, atómico y versionado de la configuración de usuario y lista de streamers.
+**Ubicación:** `{userData}/config.json`
+**Dependencias:** `fs`, `path`, `electron` (app.getPath('userData'))
+**Expone:** `CONFIG_SCHEMA_VERSION`, `getDefaultConfig`, `validateConfig`, `migrateConfig`, `loadConfig`, `saveConfig`, `resetConfig`
+**Características:**
+- Escritura atómica vía archivo temporal `.tmp` con reemplazo seguro para evitar archivos corruptos.
+- Respaldo automático `.bak` y retorno a defaults seguros ante JSON corrupto.
+- Validación y sanitización estricta de nombres y opciones (Zero Prototype Pollution).
+- Cero persistencia de secretos o estados volátiles de runtime.
+
+---
+
+## electron/cs2-stats-service.js (Nuevo en Fase 4)
+**Responsabilidad:** Servicio orquestador del fallback de estadísticas de CS2.
+**Estrategia:** HLTV (Primary) → BO3.gg (Fallback) → UNAVAILABLE.
+**Expone:** `analyzeMatchup(team1, team2, opts)`, `isStatsSufficient(stats)`, `calculateMatchupScoring(normalizedStats)`
+**Características:** Desacopla el análisis matemático de las fuentes de red. Preserva 100% las fórmulas y ponderaciones de scoring. Implementa ZERO FAKE DATA.
+
+---
+
+## electron/bo3.js (Nuevo en Fase 4)
+**Responsabilidad:** Proveedor de fallback de estadísticas CS2 consumiendo la API REST pública de BO3.gg (`https://api.bo3.gg/api/v1`).
+**Dependencias:** `node:https`, `cs2-provider.js`
+**Expone:** `getMatchupData`, `resolveTeam`, `getTeamMatches`, `normalizeSlug`
+**Caches en memoria:**
+- `teamCache` (15 min)
+- `rankedTeamsCache` (15 min)
+- `matchesCache` (15 min)
+
+---
+
+## electron/cs2-provider.js (Nuevo en Fase 4)
+**Responsabilidad:** Definiciones de contratos comunes (`NormalizedCS2Stats`), estados de suficiencia (`StatsStatus`) y constructores de objetos que garantizan ZERO FAKE DATA.
+
+---
+
+## electron/series-tracker.js (Nuevo en Fase 9.1)
+**Responsabilidad:** Gestor de dominio para el ciclo de vida de series y mapas deportivos (CS2).
+**Jerarquía:** `SERIES -> MAPS -> PREDICTIONS`.
+**Dependencias:** `hltv.js` (para normalización de nombres/keys).
+**Expone:** `SERIES_STATUS`, `MAP_STATUS`, `createSeriesTracker`, `extractMapAndFormat`, `defaultTracker`.
+**Características:**
+- Desacopla la identidad de predicción (`forg1::<id>`) de la identidad de serie (`${t1}_vs_${t2}_${date}`).
+- Rastreo dinámico de `seriesScore` (solo actualizado ante resultados verificados de mapa).
+- Manejo canónico de formatos BO1, BO3, BO5 y UNKNOWN sin inventar datos (Zero Fake Data).
+- Retención en memoria de series finalizadas por 30 minutos antes de purga.
+
 
 ---
 

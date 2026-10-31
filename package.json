@@ -1,6 +1,6 @@
 {
   "name": "pointstream",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "description": "Monitor de streams de Kick.com y predicciones de CS2 (Forg1 + HLTV) con notificaciones de escritorio",
   "main": "electron/main.js",
   "scripts": {
@@ -9,10 +9,11 @@
     "test": "node --test test/**/*.test.js",
     "icon": "electron build/prepare-icon.js",
     "icon:logo": "node build/generate-icon.js",
-    "art": "node build/generate-installer-art.js",
+    "art": "electron build/generate-installer-art.js",
     "telegram:setup": "node build/setup-telegram-bot.js",
     "screenshots": "electron build/capture-screenshots.js",
-    "dist": "npm run icon && npm run art && electron-builder",
+    "dist": "npm run icon && npm run art && electron-builder && node build/checksums.js",
+    "checksums": "node build/checksums.js",
     "pack": "npm run icon && electron-builder --dir"
   },
   "keywords": [
@@ -23,7 +24,11 @@
     "live",
     "streaming"
   ],
-  "author": "elkisser",
+  "author": {
+    "name": "elkisser",
+    "url": "https://github.com/elkisser/pointStream"
+  },
+  "homepage": "https://github.com/elkisser/pointStream",
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.0.0",
@@ -35,41 +40,55 @@
   "build": {
     "appId": "com.pointstream.app",
     "productName": "pointStream",
-    "copyright": "Copyright © 2026",
+    "copyright": "Copyright © 2026 elkisser",
     "directories": {
       "output": "dist",
       "buildResources": "build"
     },
+    "asar": true,
     "files": [
       "electron/**/*",
       "ui/**/*",
       "assets/**/*",
+      "!assets/icon_hd.png",
+      "!assets/screenshots/**/*",
       "package.json"
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "pointStream-Setup-${version}.${ext}"
+      "executableName": "PointStream",
+      "artifactName": "PointStream-${version}-Setup.${ext}",
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
+      "language": "3082",
+      "installerLanguages": [
+        "es_ES"
+      ],
+      "license": "LICENSE",
+      "include": "build/installer.nsh",
+      "uninstallDisplayName": "PointStream ${version}",
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "pointStream",
+      "shortcutName": "PointStream",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
       "installerHeader": "build/installerHeader.bmp",
       "installerSidebar": "build/installerSidebar.bmp",
       "uninstallerSidebar": "build/installerSidebar.bmp",
-      "deleteAppDataOnUninstall": true,
+      "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
       "menuCategory": false
     }

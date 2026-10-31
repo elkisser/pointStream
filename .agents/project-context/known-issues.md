@@ -31,22 +31,29 @@
 ## ISSUE-002: Instalador sin identidad visual completa
 
 **Severidad:** BAJA-MEDIA
-**Estado:** DOCUMENTADO, pendiente
+**Estado:** ✅ RESUELTO en Fase 5
 
-### Análisis
-- `installerHeader.bmp`: 25KB (164×314 px típico de NSIS)
-- `installerSidebar.bmp`: 154KB (164×314 o 55×55 + sidebar)
-- `icon.ico`: 35KB (256×256 PNG embebido en ICO)
-- Los BMP se generan con `build/generate-installer-art.js`
-- El script genera imágenes programáticas (como generate-icon.js)
+### Root Cause
+- `build/generate-installer-art.js` original generaba BMPs programáticos con círculos y patrones geométricos genéricos sin usar el imagotipo oficial de PointStream.
+- `package.json` script `art` llamaba a `node` en vez de `electron`, impidiendo utilizar `nativeImage` de Electron para manipulación y escalado de imágenes de alta fidelidad sin dependencias nativas complejas.
+- El nombre del artefacto era genérico (`pointStream-Setup-${version}.${ext}`) en vez de la convención formal de Windows (`PointStream-${version}-Setup.exe`).
 
-**Problema:** Los BMPs generados por código pueden verse genéricos/básicos.
-La configuración NSIS en package.json es correcta y referencia estos assets.
-El problema está en el contenido visual de los BMPs, no en la configuración.
-
-### Solución Recomendada (NO implementar aún)
-Rediseñar `generate-installer-art.js` para usar la paleta visual real de PointStream
-(verde #53FC18, fondo #0b0e0f, tipografía Inter) en los BMPs.
+### Fix aplicado (Fase 5)
+1. **Rediseño integral de `generate-installer-art.js`:**
+   - Consume directamente el logo oficial de alta definición `assets/icon_hd.png` (860 KB).
+   - Utiliza `nativeImage` de Electron para escalado bicúbico (`quality: 'best'`) y composición de pixeles BGRA.
+   - Aplica la paleta oficial de PointStream: fondo oscuro espacial `#0b0e0f` (`rgb(11, 14, 15)`), gradiente radial de brillo esmeralda/verde `#53FC18`, y acentos en verde neón.
+   - Genera mapas de bits de 24 bits uncompressed `BI_RGB` perfectamente legibles y renderizables por el motor NSIS:
+     - `installerSidebar.bmp` (164×314 px): Logo de PointStream centrado con halo de luz y texto de marca con acento `#53FC18`.
+     - `installerHeader.bmp` (150×57 px): Logotipo con brillo en el encabezado superior derecho del asistente de instalación.
+2. **Hardening de Empaquetado y Distribución (`package.json`):**
+   - Script `art`: `electron build/generate-installer-art.js`.
+   - `executableName`: `"PointStream"`.
+   - `artifactName`: `"PointStream-${version}-Setup.${ext}"`.
+   - `asar`: `true` activado de forma explícita.
+   - Optimización de ASAR: Exclusión de `assets/icon_hd.png` y `assets/screenshots/**/*` del empaquetado final, reduciendo el tamaño del bundle sin perder fidelidad visual.
+   - Protección de datos del usuario: `deleteAppDataOnUninstall: false` para evitar borrar credenciales, configuraciones o sesiones de usuario tras desinstalar.
+   - Output final verificado: `dist/PointStream-1.2.0-Setup.exe` (76.6 MB), 0 alertas en Defender, 0 vulnerabilidades en dependencias de producción.
 
 ---
 
@@ -109,45 +116,48 @@ Sesión persistida en persist:forg1 para el scraper
 ## ISSUE-004: Estadísticas CS2 — Sin fallback de HLTV
 
 **Severidad:** MEDIA
-**Estado:** DOCUMENTADO, pendiente implementación
+**Estado:** ✅ RESUELTO en Fase 4
 
-### Estado Actual
-- Fuente única: HLTV (scraping con BrowserWindow + Cloudflare bypass)
-- Si HLTV no responde (timeout 40s) → `analyzeMatchup` retorna `dataQuality: 'none'`
-- La UI muestra "Sin estadísticas de HLTV" y pide conectar HLTV
-- NO hay fallback automático a otra fuente
+### Estado Actual y Solución Implementada
+- Se implementó un sistema jerárquico de proveedores de estadísticas CS2:
+  `HLTV (Primary) → BO3.gg (Fallback) → UNAVAILABLE`.
+- HLTV continúa siendo la fuente primaria sin alteraciones.
+- Si HLTV falla (bloqueo Cloudflare, timeout o error de red) o entrega datos insuficientes (`isStatsSufficient` retorna falso), el sistema recurre inmediatamente a BO3.gg.
+- BO3.gg se integra a través de su API REST pública oficial (`https://api.bo3.gg/api/v1`) con solicitudes HTTPS nativas sin necesidad de instancias de Chromium adicionales ni sobrecarga de memoria.
+- Se implementó una capa de abstracción con contrato común normalizado (`NormalizedCS2Stats`) y función pura de scoring (`calculateMatchupScoring`), desacoplando la lógica matemática del scraping.
+- Se preserva el 100% de la matemática predictiva existente (ranking diff, recent winrates, tournament form, H2H, blend 78%/22%).
+- Trazabilidad completa (`source: 'hltv' | 'bo3gg'`) reflejada en UI y Telegram.
+- Política estricta ZERO FAKE DATA aplicada (valores faltantes representados como `null`, nunca números inventados o defaults engañosos).
 
-### Estrategia Deseada
-```
-HLTV
-  ↓ (si falla o timeout)
-BO3.gg (fuente alternativa a investigar)
-  ↓
-estadísticas normalizadas al mismo formato
-  ↓
-prediction engine (sin modificar)
-```
-
-### Investigación Pendiente (Fase siguiente)
-- Analizar estructura de BO3.gg: ¿tiene ranking, resultados, H2H?
-- ¿Es scrappeable con BrowserWindow? ¿Tiene Cloudflare?
-- ¿Los datos son suficientemente equivalentes para el prediction engine?
-- Definir el contrato de datos normalizados entre HLTV y BO3.gg
-
-### Regla ZERO FAKE DATA
-Si ninguna fuente tiene datos → retornar `dataQuality: 'none'` + `INSUFFICIENT_DATA`
-NUNCA completar valores faltantes con estimaciones o defaults.
 
 ---
 
 ## ISSUE-005: Sin persistencia de configuración del renderer
 
-**Severidad:** BAJA
-**Estado:** DOCUMENTADO
+**Severidad:** MEDIA
+**Estado:** ✅ RESUELTO en Fase 7
 
-- La lista de streamers en `ui/app.js` `state.streamers` se pierde al cerrar la app
-- Los streamers por defecto `['baldu', 'forg1']` están hardcodeados (línea 3 de app.js)
-- No hay localStorage ni archivo de config para el renderer
+### Root Cause (confirmado)
+- La lista de streamers (`state.streamers = ['baldu', 'forg1']`) y las preferencias del monitor (`platform`, `interval`, `autoOpen`, `notifications`, `minimize`) residían exclusivamente en la memoria volátil del renderer en `ui/app.js`.
+- No existía un canal IPC ni módulo de almacenamiento seguro que leyera o escribiera estas preferencias hacia el disco del usuario.
+- Al cerrar y reabrir PointStream, cualquier cambio se descartaba forzando a reingresar los streamers manualmente.
+
+### Solución Implementada (Fase 7)
+1. **Módulo de Almacenamiento Atómico (`electron/config-store.js`):**
+   - Persiste en `app.getPath('userData')/config.json`.
+   - Esquema versionado (`CONFIG_SCHEMA_VERSION = 1`).
+   - Validación estricta y sanitización de tipos (Zero Prototype Pollution, nombres de streamers filtrados por regex `^[a-z0-9_\-.]{1,50}$`, max 100 streamers).
+   - Escritura atómica (archivo temporal `.tmp` + rename / replace seguro).
+   - Resistencia a fallos: ante JSON corrupto, crea automáticamente copia de seguridad `.bak`, loggea advertencia diagnóstica y retorna defaults seguros sin crashear.
+2. **Frontera de Seguridad e IPC (`electron/main.js` y `electron/preload.js`):**
+   - El proceso principal es el único propietario del acceso al filesystem.
+   - Canales expuestos: `config-get`, `config-save`, `config-reset` expuestos en `window.configAPI`.
+   - Cero persistencia de secretos: nunca almacena tokens, cookies de sesión de Kick/Forg1/HLTV, passwords ni runtime states volátiles (`isMonitoring` permanece `false` al arrancar para evitar acciones sorpresa de fondo).
+3. **Restauración en UI (`ui/app.js`):**
+   - `init()` asíncrono carga la configuración persistida antes de renderizar.
+   - Sincroniza `state.streamers` y `state.config` y refleja los valores en sliders, checkboxes y temas.
+   - Auto-guarda en disco al agregar/remover streamers, cambiar plataforma o modificar intervalos y opciones.
+4. **Test Suite:** 17 tests unitarios en `test/config-persistence.test.js` (total del proyecto: 60 tests PASS, 0 FAIL).
 
 ---
 
@@ -205,13 +215,56 @@ limpiarse en unlink — es temporal y se usa solo durante el flujo de vinculaci�
 
 ---
 
-## ISSUE-008: getH2H usa innerText (frágil)
+## ISSUE-008: getH2H usa innerText (frágil) / Contaminación por partidos de terceros
 
-**Severidad:** BAJA
-**Estado:** DOCUMENTADO
+**Severidad:** MEDIA-ALTA
+**Estado:** ✅ RESUELTO en Fase 6
 
-En `hltv.js`, `getH2H()` usa `fetchHLTV()` sin extractorBody, obtiene `.text` y aplica regex:
-```js
-const scores = text.match(/\b(\d{1,2})\s*[-:]\s*(\d{1,2})\b/g) || [];
-```
-Este regex puede capturar números que no son scores (fechas, IDs, etc.).
+### Root Cause (confirmado)
+1. **Contaminación de resultados:** La URL `https://www.hltv.org/results?team=${team1Id}&team=${team2Id}` retorna una lista combinada (*OR*) de todos los partidos recientes del Equipo 1 **O** del Equipo 2, no únicamente enfrentamientos directos. Por ejemplo, en una consulta entre Vitality y G2, HLTV entrega 100 partidos donde 98 son contra otros rivales (Vitality vs magic, Legacy vs G2, etc.).
+2. **Parsing ingenuo por regex:** El parser anterior tomaba el `innerText` completo de la página sin `extractorBody` y aplicaba `text.match(/\b(\d{1,2})\s*[-:]\s*(\d{1,2})\b/g)` sobre los primeros 10 números, asumiendo erróneamente que cualquier par de dígitos en la página correspondía a un partido directo entre los dos equipos solicitados.
+3. **Inversión de local/visitante:** Asumía que el primer score correspondía siempre al Equipo 1, invirtiendo victorias cuando el equipo figuraba como visitante.
+4. **Sin deduplicación:** El DOM de HLTV contiene nodos repetidos para vistas responsive.
+
+### Solución Implementada (Fase 6)
+1. **Extracción Estructurada del DOM (`extractorBody`):**
+   `getH2H()` ahora inyecta una función en el contexto de Chromium que recorre selectores específicos (`.result-con`, `a[href*="/matches/"]`, `.team`, `.result-score`, `.event-name`).
+2. **Validación Estricta de Identidad (`parseH2HMatches`):**
+   Se normalizan los nombres con `normKey(normalizeTeamName(...))` y se descartan al 100% partidos donde participe un tercer equipo o variantes no equivalentes (evitando falsos positivos por substrings como `Team Liquid` vs `Liquid Academy`).
+3. **Manejo de Inversión y Formatos de Serie:**
+   Detecta la posición relativa de `team1` y `team2` asignando el puntaje al contendiente correspondiente. En series BO3/BO5 cuenta la serie como 1 victoria de partido directo (no mapas individuales). Empates o scores 0-0 no otorgan victoria espuria.
+4. **Deduplicación Canónica:**
+   Deduplica por `matchId` obtenido del `href` canónico de HLTV.
+5. **Diferenciación de Estados:**
+   Distingue explícitamente entre `EMPTY` (`total: 0`, cero enfrentamientos directos) y `FAILED` (fallo de red / Cloudflare).
+6. **Preservación Matemática:**
+   El contrato `{ total, team1Wins, team2Wins }` y el scoring (+4 pts por victoria) en `cs2-stats-service.js` permanecen 100% idénticos y compatibles.
+7. **Test Suite:** 15 pruebas unitarias completas en `test/hltv-h2h.test.js` (total del proyecto: 43 tests PASS, 0 FAIL).
+
+---
+
+## ISSUE-009: Colisión de Cooldown entre Mapas y Pérdida de Contexto de Serie
+
+**Severidad:** ALTA
+**Estado:** ✅ RESUELTO en Fase 9.1
+
+### Root Cause (confirmado)
+1. **Confusión de Identidades:** Se utilizaba `predictionSignature` de forma intercambiable para la predicción individual y para el match/serie. Cuando Forg1 no emitía UUID explícito, la firma se reducía a `team1::team2` (`vitality::mouz`).
+2. **Falso Positivo de Cooldown:** Al cerrarse la predicción del Mapa 1, la firma ingresaba a `recentlyClosed` con un cooldown de 5 minutos. Al comenzar el Mapa 2 entre los mismos equipos (~2-4 min después), PointStream descartaba la nueva predicción considerándola un re-aviso en cooldown.
+3. **Ausencia de Entidad Serie:** No existía el concepto de serie en memoria. Cada predicción se evaluaba como un evento aislado sin historial de mapas jugados, formato (BO1/BO3/BO5) ni marcador acumulado (`seriesScore`).
+
+### Solución Implementada (Fase 9.1)
+1. **Módulo de Dominio `electron/series-tracker.js`:**
+   - Modela la jerarquía `SERIES -> MAPS -> PREDICTIONS`.
+   - Estados canónicos de serie: `UNKNOWN`, `UPCOMING`, `LIVE`, `WAITING_NEXT_MAP`, `FINISHED`.
+   - Estados canónicos de mapa: `UNKNOWN`, `UPCOMING`, `LIVE`, `PLAYED`.
+   - Desacoplamiento de identidades: `predictionSignature` (`forg1::<id>`), `mapSignature` (`${seriesId}_map_${mapNumber}`), `seriesId` (`${teamA}_vs_${teamB}_${date}`).
+2. **Corrección de Cooldown en `electron/main.js`:**
+   - `recentlyClosed` opera únicamente sobre la identidad única de la predicción, impidiendo que el cierre del Mapa 1 bloquee el Mapa 2 de la misma serie.
+   - Cerrar una predicción actualiza la serie a `WAITING_NEXT_MAP`, NUNCA a `FINISHED`.
+3. **Persistencia en Runtime y Purga:**
+   - La serie conserva el `seriesScore` a través de los mapas.
+   - Las series finalizadas se retienen 30 minutos antes de ser purgadas de la memoria.
+4. **Zero Fake Data:**
+   - Sin 2 equipos válidos, `seriesId = null`. Formato y número de mapa no deducibles permanecen `UNKNOWN` o `null`.
+5. **Test Suite:** 20 pruebas unitarias completas en `test/series-tracker.test.js` (total del proyecto: 80 tests PASS, 0 FAIL).

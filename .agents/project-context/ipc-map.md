@@ -1,4 +1,4 @@
-﻿# PointStream — IPC Map Completo
+# PointStream — IPC Map Completo
 
 > Fase 0 — Auditoría 2026-09-17
 
@@ -52,6 +52,16 @@
 | telegram-set-enabled | handle | r→m→r | { ok, enabled } |
 | telegram-unlink | handle | r→m→r | { ok } |
 | telegram-test | handle | r→m→r | { ok } |
+
+---
+
+## Namespace: configAPI (configuración persistente — Fase 7)
+
+| IPC Channel | Tipo | Dirección | Handler |
+|-------------|------|-----------|---------|
+| config-get | handle | r→m→r | configStore.loadConfig() |
+| config-save | handle | r→m→r | configStore.saveConfig(data) |
+| config-reset | handle | r→m→r | configStore.resetConfig() |
 
 ---
 
@@ -115,7 +125,12 @@
   players: string,
   myBet: string,
   myWin: string,
-  status: 'open',
+  status: 'OPEN'|'WAITING_RESULT'|'RESOLVED'|'UNKNOWN',
+  seriesId?: string|null,        // e.g. 'mouz_vs_vitality_2026-09-18' (Fase 9.1)
+  mapNumber?: number|null,       // 1, 2, 3 (Fase 9.1)
+  mapSignature?: string|null,    // e.g. 'mouz_vs_vitality_2026-09-18_map_2' (Fase 9.1)
+  seriesScore?: { team1: number, team2: number }, // (Fase 9.1)
+  format?: 'BO1'|'BO3'|'BO5'|'UNKNOWN', // (Fase 9.1)
   analysis?: AnalysisObject  // solo en auto-analyze
 }
 ```

@@ -47,31 +47,33 @@
 - `window-minimize/maximize/close/is-maximized` (send, no handle)
 - Event push: `window-state`, `stream-update`, `predictions-update`
 
-## Flujo — Predicción completa
+## Flujo — Predicción completa (Con Series & Map Tracker)
 
 ```
 "Escanear Forg1" → predictionsAPI.autoAnalyze()
   → IPC: auto-analyze-predictions
   → scrapeForg1Predictions() [persist:forg1]
       polling DOM → parsePredictions()
-  → para cada predicción con >=2 equipos:
-      analyzeMatchup(t1, t2) [persist:hltv]
-          → resolveTeam() → getRankingMap()
-          → getTeamResults() × 2
-          → getH2H()
+  → para cada predicción:
+      → seriesTracker.upsertPrediction(pred)
+      → si >= 2 equipos:
+          analyzeMatchup(t1, t2) [persist:hltv / bo3.gg fallback]
           → scoring + verdict
-  → renderCards() en UI
+  → renderCards() en UI (con badges de mapa y serie)
 ```
 
 ## Flujo — Monitoreo + Telegram
 
 ```
-startMonitoring() → registra knownPredictions (sin notificar)
+startMonitoring() → registra knownPredictions en seriesTracker (sin notificar)
 setInterval(60s) → runPredictionScan()
+  → seriesTracker.upsertPrediction() para cada predicción
   → detectar nuevas/cerradas vs knownPredictions
-  → nueva: showNotification() + notifyTelegramForPrediction()
+  → cerrada: seriesTracker.markPredictionClosed(predId)
+      → Telegram avisa si la serie continúa (WAITING_NEXT_MAP) o si finalizó (FINISHED)
+  → nueva (OPEN): showNotification() + notifyTelegramForPrediction()
       → analyzeMatchup() → buildPredictionMessage() → sendMessage()
-  → cerrada: mensaje Telegram de resultado
+  → seriesTracker.removeExpiredSeries() (purga > 30min)
   → push: predictions-update al renderer
 ```
 

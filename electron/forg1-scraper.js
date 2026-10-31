@@ -1,4 +1,6 @@
 const { BrowserWindow, session } = require('electron');
+const { extractMapAndFormat } = require('./series-tracker');
+const { isKillRangeLabel, extractPlayerNameFromQuestion } = require('./player-kills');
 
 // Ventana persistente — se crea una sola vez y se reutiliza entre scans.
 let _win = null;
@@ -21,20 +23,30 @@ function getForg1Window() {
 /**
  * Clasifica el tipo de predicción para que el análisis HLTV sepa qué hacer.
  * 'team-matchup' → dos equipos pro, analizar con HLTV
- * 'kills-range'  → rangos de kills (0-9/10-14/etc), sin análisis HLTV
+ * 'kills-range'  → rangos de kills de UN jugador (0-9 / 11 a 13)
+ * 'kills-duel'   → quién mata más (opciones = nicks de jugadores)
  * 'ot'           → incluye opción de OT
  * 'yes-no'       → pregunta de sí/no
  * 'map'          → sobre un mapa
  * 'other'        → otro tipo, mostrar comunidad sin análisis
  */
+function isMostKillsQuestion(question) {
+  const q = String(question || '');
+  return /qui[eé]n\s+(?:mata|kill|frag|hace\s+m[aá]s)|m[aá]s\s+(?:kills?|frags?|bajas)|mata\s+m[aá]s|m[aá]s\s+kills?|el\s+que\s+m[aá]s\s+mata|most\s+kills|kill\s*leader|top\s+fragg/i.test(q);
+}
+
 function classifyPrediction(question, options) {
   const q = (question || '').toLowerCase();
   const opts = options || [];
   const optNames = opts.map(o => (o.name || o.label || '').toLowerCase().trim());
 
-  // Rangos de kills: "0-9", "10-14", "+20", "1 - 5"
-  if (optNames.some(o => /^\d+\s*-\s*\d+$/.test(o) || /^\+\d+$/.test(o))) return 'kills-range';
-  if (/kill|kills|frag|baja|bajas/i.test(question)) return 'kills-range';
+  // Rangos de kills: "0-9", "10-14", "+20", "1 - 5", "11 a 13", "4 o menos", "17 o mas"
+  if (optNames.some(o => isKillRangeLabel(o))) return 'kills-range';
+
+  // Quién mata más: las opciones son jugadores, no rangos
+  if (isMostKillsQuestion(question) && optNames.length >= 2) return 'kills-duel';
+
+  if (/cu[aá]nt[oa]s?\s+(kills?|mata)|kills?\s+(de|hace)|frag|baja|bajas/i.test(question)) return 'kills-range';
 
   // Sí/No (evaluar antes de OT en pregunta por si la pregunta es "¿Habrá overtime? Sí / No")
   if (optNames.some(n => n === 'sí' || n === 'si' || n === 'no')) return 'yes-no';
@@ -55,13 +67,169 @@ function classifyPrediction(question, options) {
 }
 
 /**
+ * Estados canónicos del ciclo de vida de predicciones.
+ */
+const PredictionStatus = {
+  OPEN: 'OPEN',                     // Abierta para recibir apuestas
+  WAITING_RESULT: 'WAITING_RESULT', // Cerrada para apuestas / esperando resolución
+  RESOLVED: 'RESOLVED',             // Resuelta con resultado definitivo
+  UNKNOWN: 'UNKNOWN'                // Estado no reconocido (no asumir abierto ni resuelto)
+};
+
+function isFinishedPrediction(pred) {
+  if (!pred) return true;
+  const s = pred.status;
+  return s === PredictionStatus.RESOLVED || s === PredictionStatus.WAITING_RESULT;
+}
+
+function isLivePrediction(pred) {
+  return pred && !isFinishedPrediction(pred);
+}
+
+function keepLivePredictions(preds) {
+  return (preds || []).filter(isLivePrediction);
+}
+
+/**
+ * Normaliza cualquier estado crudo (string, API o texto) al ciclo de vida canónico.
+ * ZERO FAKE DATA: No asumir abierto si no es inequívocamente abierto.
+ */
+function normalizePredictionStatus(rawStatus, textContext = '', locksAt = null) {
+  const s = String(rawStatus || '').toLowerCase().trim();
+  const txt = String(textContext || '').toLowerCase();
+
+  // Comprobar si el texto contiene indicadores explícitos de cierre
+  if (
+    /esperando\s+(?:ganador|resultado)/i.test(txt) ||
+    /predicci[oó]n\s+cerrada/i.test(txt) ||
+    /cerrada[.\s]+esperando/i.test(txt)
+  ) {
+    return PredictionStatus.WAITING_RESULT;
+  }
+
+  // Comprobación de locksAt si ya expiró en el tiempo
+  if (locksAt) {
+    const lockTime = new Date(locksAt).getTime();
+    if (!isNaN(lockTime) && Date.now() >= lockTime) {
+      // Si la fecha límite ya pasó, la predicción ya no es apostable
+      if (s === 'resolved' || s === 'completed' || s === 'finished') {
+        return PredictionStatus.RESOLVED;
+      }
+      return PredictionStatus.WAITING_RESULT;
+    }
+  }
+
+  // Mapeo por valor de status
+  if (s === 'open' || s === 'active' || s === 'live' || s === 'en vivo') {
+    return PredictionStatus.OPEN;
+  }
+
+  if (
+    s === 'locked' ||
+    s === 'closed' ||
+    s === 'waiting_result' ||
+    s === 'waiting' ||
+    s === 'pending_result' ||
+    s === 'esperando ganador' ||
+    s === 'esperando resultado' ||
+    s === 'cerrada'
+  ) {
+    return PredictionStatus.WAITING_RESULT;
+  }
+
+  if (
+    s === 'resolved' ||
+    s === 'completed' ||
+    s === 'finished' ||
+    s === 'ended' ||
+    s === 'settled' ||
+    s === 'paid' ||
+    s === 'finalizada' ||
+    s === 'resuelta'
+  ) {
+    return PredictionStatus.RESOLVED;
+  }
+
+  return PredictionStatus.UNKNOWN;
+}
+
+/**
+ * Extrae el resultado real de una predicción resuelta.
+ * ZERO FAKE DATA: Si no hay resultado explícito comprobable, devuelve null.
+ */
+function extractPredictionResult(p, outcomes = []) {
+  if (!p) return null;
+
+  // 1. Ganador explícito en objeto
+  if (p.winning_outcome_id) {
+    const found = outcomes.find(o => String(o.id) === String(p.winning_outcome_id));
+    if (found) return found.label || found.name || p.winning_outcome_id;
+    return String(p.winning_outcome_id);
+  }
+
+  if (p.winner_label || p.winner_name || p.result) {
+    return String(p.winner_label || p.winner_name || p.result);
+  }
+
+  // 2. Revisar si alguna outcome tiene flag 'won' o 'is_winner'
+  const winOutcome = outcomes.find(o => o.won === true || o.is_winner === true);
+  if (winOutcome) {
+    return winOutcome.label || winOutcome.name || null;
+  }
+
+  return null;
+}
+
+/**
+ * Forg1 ahora publica varias apuestas a la vez.
+ * `predictions` (plural) es la lista completa; `prediction` es un destacado (a menudo la primera).
+ */
+function collectRawPredictions(data) {
+  if (!data || typeof data !== 'object') return [];
+  const seen = new Set();
+  const list = [];
+
+  const push = (p) => {
+    if (!p || !p.id || seen.has(String(p.id))) return;
+    seen.add(String(p.id));
+    list.push(p);
+  };
+
+  if (Array.isArray(data.predictions) && data.predictions.length > 0) {
+    data.predictions.forEach(push);
+    return list;
+  }
+
+  if (Array.isArray(data.prediction)) {
+    data.prediction.forEach(push);
+    return list;
+  }
+
+  if (data.prediction) push(data.prediction);
+  return list;
+}
+
+function attachUserBet(p, data) {
+  const betsById = data.userBets || data.user_bets || null;
+  let userBet = null;
+  if (betsById && p.id && (betsById[p.id] || betsById[String(p.id)])) {
+    userBet = betsById[p.id] || betsById[String(p.id)];
+  } else if (data.userBet && (!data.userBet.prediction_id || String(data.userBet.prediction_id) === String(p.id))) {
+    userBet = data.userBet;
+  }
+  if (!userBet) return { myBet: null, myWin: null };
+  return {
+    myBet: userBet.amount != null ? String(userBet.amount) : null,
+    myWin: userBet.projected_payout != null ? String(userBet.projected_payout) + ' pts' : null
+  };
+}
+
+/**
  * Transforma el estado estructurado recibido desde la API de Forg1 (/api/predictions/state)
  * al modelo de dominio: Prediction -> Markets -> Selections.
  */
 function parsePredictionFromState(data) {
-  if (!data || !data.prediction) return [];
-  const rawPred = data.prediction;
-  const predItems = Array.isArray(rawPred) ? rawPred : [rawPred];
+  const predItems = collectRawPredictions(data);
   const results = [];
 
   for (const p of predItems) {
@@ -71,6 +239,9 @@ function parsePredictionFromState(data) {
     const rawMarkets = Array.isArray(p.markets) && p.markets.length > 0 ? p.markets : [p];
     let totalPointsAll = 0;
     let totalBettorsAll = 0;
+
+    const locksAt = p.locks_at || null;
+    const globalStatus = normalizePredictionStatus(p.status, '', locksAt);
 
     const markets = rawMarkets.map((m, mIdx) => {
       const q = (m.title || m.question || p.title || 'Predicción abierta').trim();
@@ -100,12 +271,15 @@ function parsePredictionFromState(data) {
       });
 
       const mType = classifyPrediction(q, selections);
+      const mStatus = m.status ? normalizePredictionStatus(m.status, '', locksAt) : globalStatus;
+      const mResult = extractPredictionResult(m, outcomes);
 
       return {
         id: m.id || `${p.id}-m${mIdx}`,
         question: q,
         type: mType,
-        status: m.status || p.status || 'open',
+        status: mStatus,
+        result: mResult,
         totalPool: mPool,
         totalBettors: mBettors,
         selections
@@ -115,7 +289,6 @@ function parsePredictionFromState(data) {
     if (markets.length === 0 || markets.every(m => m.selections.length === 0)) continue;
 
     let closesAt = '';
-    const locksAt = p.locks_at || null;
     if (locksAt) {
       const diffSec = Math.max(0, Math.floor((new Date(locksAt).getTime() - Date.now()) / 1000));
       const h = Math.floor(diffSec / 3600);
@@ -134,20 +307,25 @@ function parsePredictionFromState(data) {
     }));
     const teams = options.slice(0, 2);
 
-    let myBet = null;
-    let myWin = null;
-    if (data.userBet) {
-      myBet = data.userBet.amount != null ? String(data.userBet.amount) : null;
-      if (data.userBet.projected_payout != null) {
-        myWin = String(data.userBet.projected_payout) + ' pts';
-      }
-    }
+    const { myBet, myWin } = attachUserBet(p, data);
+
+    const predResult = extractPredictionResult(p, p.outcomes || []) || primaryMarket.result || null;
+    const titleText = (p.title ? p.title + ' ' : '') + primaryMarket.question;
+    const meta = extractMapAndFormat(titleText);
+    const allMarketsResolved = markets.length > 0 && markets.every(m => m.status === PredictionStatus.RESOLVED);
+    // Señales de que ya terminó aunque el status venga con un valor nuevo/no mapeado.
+    const hasResolvedMarker = !!(p.resolved_at || p.resolvedAt || p.settled_at || p.winning_outcome_id ||
+      p.winner_outcome_id || (p.outcomes || []).some(o => o && (o.won === true || o.is_winner === true || o.winner === true)));
+    const status = (predResult || allMarketsResolved || hasResolvedMarker)
+      ? PredictionStatus.RESOLVED
+      : globalStatus;
 
     results.push({
       id: p.id,
       title: p.title || primaryMarket.question,
       question: primaryMarket.question,
-      status: p.status || 'open',
+      status,
+      result: predResult,
       locksAt,
       closesAt,
       pool: totalPointsAll > 0 ? totalPointsAll.toLocaleString('es-AR') + ' pts' : '',
@@ -155,9 +333,20 @@ function parsePredictionFromState(data) {
       myBet,
       myWin,
       predType: primaryMarket.type,
+      playerName: primaryMarket.type === 'kills-range'
+        ? extractPlayerNameFromQuestion(primaryMarket.question || p.title)
+        : null,
       teams,
       options,
-      markets
+      markets,
+      mapNumber: meta.mapNumber,
+      format: meta.format,
+      mapName: meta.mapName,
+      minBet: p.min_bet != null ? p.min_bet : null,
+      maxBet: p.max_bet != null ? p.max_bet : null,
+      seriesId: null,
+      mapSignature: null,
+      seriesScore: null
     });
   }
 
@@ -168,7 +357,28 @@ function parsePredictionFromState(data) {
  * Extrae predicciones del texto plano cuando la API directa no está disponible.
  * Soporta múltiples preguntas y mercados sin aplanarlos en una sola lista.
  */
+/**
+ * La página /predicciones muestra debajo de las activas la sección "ÚLTIMOS RESULTADOS"
+ * (cards con "GANÓ · FURIA"). Esas predicciones ya terminaron: nunca deben parsearse
+ * como abiertas. Devuelve solo el texto de la sección de activas.
+ */
+function activeSectionText(body) {
+  let txt = String(body || '');
+  const cut = txt.search(/^[ \t]*[ÚU]LTIMOS\s+RESULTADOS[ \t]*$/im);
+  if (cut >= 0) txt = txt.slice(0, cut);
+  return txt;
+}
+
+function hasNoActivePredictions(body) {
+  return /no\s+hay\s+predicciones\s+activas/i.test(activeSectionText(body));
+}
+
 function parsePredictionsFromText(body) {
+  if (hasNoActivePredictions(body)) {
+    console.log('[Forg1] La página dice "No hay predicciones activas"');
+    return [];
+  }
+  body = activeSectionText(body);
   const lines = (body || '').split('\n').map(l => l.trim()).filter(l => l.length > 0);
   console.log('[Forg1] Total líneas:', lines.length);
 
@@ -221,7 +431,7 @@ function parsePredictionsFromText(body) {
   function isRangeOption(s) {
     if (!s) return false;
     const t = s.trim();
-    return /^\d+\s*-\s*\d+$/.test(t) || /^\+\d+$/.test(t) ||
+    return isKillRangeLabel(t) ||
            /^OT$/i.test(t) || /^(SÍ|SI|NO)$/i.test(t);
   }
 
@@ -333,6 +543,12 @@ function parsePredictionsFromText(body) {
     }
   }
 
+  // Detectar estado a partir del texto completo (ej: "Esperando ganador", "Predicción cerrada")
+  const textStatus = normalizePredictionStatus('', body, null);
+  const derivedStatus = textStatus !== PredictionStatus.UNKNOWN
+    ? textStatus
+    : (closesAt ? PredictionStatus.OPEN : PredictionStatus.UNKNOWN);
+
   const markets = marketGroups.map((g, idx) => {
     const q = g.question;
     const selections = g.hits.map((h, sIdx) => ({
@@ -348,7 +564,8 @@ function parsePredictionsFromText(body) {
       id: `m${idx + 1}`,
       question: q,
       type,
-      status: 'open',
+      status: derivedStatus,
+      result: null,
       selections
     };
   });
@@ -361,25 +578,37 @@ function parsePredictionsFromText(body) {
     ? teams.map(t => t.name.toLowerCase().replace(/\s+/g, '')).sort().join('-vs-')
     : primaryMarket.question.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
 
+  const meta = extractMapAndFormat(primaryMarket.question);
+
   return [{
     id: stableId,
     title: primaryMarket.question,
     question: primaryMarket.question,
-    status: 'open',
+    status: derivedStatus,
+    result: null,
     closesAt,
     pool,
     players,
     myBet,
     myWin,
     predType: primaryMarket.type,
+    playerName: primaryMarket.type === 'kills-range'
+      ? extractPlayerNameFromQuestion(primaryMarket.question)
+      : null,
     teams,
     options,
-    markets
+    markets,
+    mapNumber: meta.mapNumber,
+    format: meta.format,
+    mapName: meta.mapName,
+    seriesId: null,
+    mapSignature: null,
+    seriesScore: null
   }];
 }
 
 function parsePredictions(input) {
-  if (input && typeof input === 'object' && input.prediction) {
+  if (input && typeof input === 'object' && ('prediction' in input || Array.isArray(input.predictions))) {
     return parsePredictionFromState(input);
   }
   if (typeof input === 'string') {
@@ -467,7 +696,11 @@ async function scrapeForg1Predictions() {
               const res = await fetch('/api/predictions/state', { cache: 'no-store' });
               if (res.ok) {
                 const json = await res.json();
-                if (json && json.prediction) {
+                // Si la API respondió, es la verdad aunque la lista venga vacía.
+                // Antes una lista vacía caía al parser de texto, que leía la sección
+                // "ÚLTIMOS RESULTADOS" y avisaba predicciones ya terminadas.
+                if (json && typeof json === 'object' &&
+                    ('prediction' in json || Array.isArray(json.predictions))) {
                   return { success: true, type: 'state', data: json };
                 }
               }
@@ -497,7 +730,7 @@ async function scrapeForg1Predictions() {
 
         if (extraction.type === 'state') {
           clearInterval(poll);
-          const predictions = parsePredictionFromState(extraction.data);
+          const predictions = keepLivePredictions(parsePredictionFromState(extraction.data));
           const recentResults = parseRecentResults(bodyForLoginCheck || '');
           resolve({ ready: true, loggedIn: true, predictions, recentResults, raw: 'state-api' });
           return;
@@ -506,7 +739,7 @@ async function scrapeForg1Predictions() {
         const body = extraction.body || '';
         if (body.length > 1000) {
           clearInterval(poll);
-          const predictions = parsePredictionsFromText(body);
+          const predictions = keepLivePredictions(parsePredictionsFromText(body));
           const recentResults = parseRecentResults(body);
           resolve({ ready: true, loggedIn: true, predictions, recentResults, raw: body.substring(0, 300) });
           return;
@@ -630,10 +863,17 @@ function openForg1Login() {
 }
 
 module.exports = {
+  PredictionStatus,
+  normalizePredictionStatus,
   scrapeForg1Predictions,
   openForg1Login,
   parsePredictionFromState,
   parsePredictionsFromText,
   parsePredictions,
-  classifyPrediction
+  classifyPrediction,
+  collectRawPredictions,
+  isLivePrediction,
+  isFinishedPrediction,
+  keepLivePredictions,
+  isMostKillsQuestion
 };

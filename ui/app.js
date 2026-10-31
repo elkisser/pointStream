@@ -38,18 +38,58 @@ const elements = {
 };
 
 // ============================================================
-// Inicialización
+// Inicialización y Persistencia (Fase 7 — ISSUE-005)
 // ============================================================
 
-function init() {
+async function persistCurrentConfig() {
+  try {
+    if (window.configAPI?.saveConfig) {
+      await window.configAPI.saveConfig({
+        streamers: state.streamers,
+        config: state.config
+      });
+    }
+  } catch (err) {
+    console.error('[CONFIG] Error guardando configuración:', err.message);
+  }
+}
+
+async function init() {
   setupEventListeners();
   setupWindowControls();
+
+  // Cargar configuración persistida desde disco (Fase 7)
+  try {
+    if (window.configAPI?.getConfig) {
+      const saved = await window.configAPI.getConfig();
+      if (saved) {
+        if (Array.isArray(saved.streamers)) {
+          state.streamers = saved.streamers;
+        }
+        if (saved.config && typeof saved.config === 'object') {
+          state.config = { ...state.config, ...saved.config };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[CONFIG] Error al restaurar configuración:', err.message);
+  }
+
+  // Reflejar valores en los controles del DOM
+  if (elements.intervalSlider && state.config.interval) {
+    elements.intervalSlider.value = state.config.interval;
+    if (elements.intervalValue) elements.intervalValue.textContent = `${state.config.interval}s`;
+  }
+  if (elements.autoOpenCheck) elements.autoOpenCheck.checked = !!state.config.autoOpen;
+  if (elements.notificationsCheck) elements.notificationsCheck.checked = !!state.config.notifications;
+  if (elements.minimizeCheck) elements.minimizeCheck.checked = !!state.config.minimize;
+
   applyPlatformTheme();
   renderStreamersList();
   updateUI();
   logMessage('Aplicación iniciada', 'info');
   
-  // Cargar streamers iniciales
+  // Cargar streamers en el Map de estado
   state.streamers.forEach(name => {
     state.streams.set(name, { isLive: false });
   });
@@ -64,23 +104,29 @@ function setupEventListeners() {
     if (e.key === 'Enter') addStreamer();
   });
   
-  // Slider de intervalo
+  // Slider de intervalo (input actualiza texto, change persiste en disco)
   elements.intervalSlider.addEventListener('input', (e) => {
     state.config.interval = parseInt(e.target.value);
     elements.intervalValue.textContent = `${e.target.value}s`;
+  });
+  elements.intervalSlider.addEventListener('change', () => {
+    persistCurrentConfig();
   });
   
   // Checkboxes
   elements.autoOpenCheck.addEventListener('change', (e) => {
     state.config.autoOpen = e.target.checked;
+    persistCurrentConfig();
   });
   
   elements.notificationsCheck.addEventListener('change', (e) => {
     state.config.notifications = e.target.checked;
+    persistCurrentConfig();
   });
   
   elements.minimizeCheck.addEventListener('change', (e) => {
     state.config.minimize = e.target.checked;
+    persistCurrentConfig();
   });
   
   // Toggle monitor
@@ -169,6 +215,7 @@ function switchPlatform(platform) {
 
   state.config.platform = platform;
   applyPlatformTheme();
+  persistCurrentConfig();
 
   // Resetear estado de los streams: los mismos nombres se revisarán
   // en la nueva plataforma desde cero.
@@ -199,6 +246,7 @@ function addStreamer() {
   
   state.streamers.push(name);
   state.streams.set(name, { isLive: false });
+  persistCurrentConfig();
   
   elements.streamerInput.value = '';
   renderStreamersList();
@@ -211,6 +259,7 @@ function addStreamer() {
 function removeStreamer(name) {
   state.streamers = state.streamers.filter(s => s !== name);
   state.streams.delete(name);
+  persistCurrentConfig();
   
   renderStreamersList();
   renderStreamsGrid();

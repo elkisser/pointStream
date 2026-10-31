@@ -1,4 +1,11 @@
 const { BrowserWindow } = require('electron');
+const {
+  parsePlayerMatchRows,
+  parsePlayerMatchesFromText,
+  pickPlayerFromSearch,
+  nickKey,
+  splitPlayerTeamHint
+} = require('./player-kills');
 
 // Aliases: nombre en forg1 -> nombre/búsqueda en HLTV
 const TEAM_ALIASES = {
@@ -148,7 +155,10 @@ function fetchHLTV(url, extractorBody) {
 
           extractTries++;
           const data = await win.webContents.executeJavaScript(`(function(){ ${extractorBody} })()`);
-          const empty = data == null || (Array.isArray(data) && data.length === 0);
+          const emptyArray = Array.isArray(data) && data.length === 0;
+          const emptyRows = data && Array.isArray(data.rows) && data.rows.length === 0
+            && !/\d{1,2}\s*[-–]\s*\d{1,2}/.test(data.text || '');
+          const empty = data == null || emptyArray || emptyRows;
           if (!empty) { finish(resolve, data); return; }
           if (extractTries > 5) finish(resolve, data != null ? data : null);
         } catch (e) {
@@ -397,23 +407,138 @@ function buildTeamData(resolved, results) {
 }
 
 /**
- * Head-to-head entre dos equipos.
+ * Procesa y contabiliza una lista de partidos extraídos del DOM de HLTV,
+ * filtrando estrictamente los enfrentamientos directos entre team1 y team2.
+ * Evita falsos positivos por substrings (ej. Liquid vs Liquid Academy) y
+ * maneja inversión de local/visitante, empates y deduplicación.
+ *
+ * @param {Array<{matchId?: string, href?: string, t1: string, t2: string, s1: number, s2: number, event?: string}>} rawMatches
+ * @param {string} [team1Name]
+ * @param {string} [team2Name]
+ * @returns {{ total: number, team1Wins: number, team2Wins: number, status: 'COMPLETE'|'EMPTY', matches: Array<any> }}
  */
-async function getH2H(team1Id, team2Id) {
-  try {
-    const { text } = await fetchHLTV(`https://www.hltv.org/results?team=${team1Id}&team=${team2Id}`);
-    const scores = text.match(/\b(\d{1,2})\s*[-:]\s*(\d{1,2})\b/g) || [];
-    let t1 = 0, t2 = 0;
-    for (const s of scores.slice(0, 10)) {
-      const p = s.split(/[-:]/).map(x => parseInt(x.trim()));
-      if (p.length === 2 && !isNaN(p[0]) && !isNaN(p[1])) {
-        if (p[0] > p[1]) t1++; else if (p[1] > p[0]) t2++;
-      }
+function parseH2HMatches(rawMatches, team1Name = '', team2Name = '') {
+  if (!Array.isArray(rawMatches) || !rawMatches.length) {
+    return { total: 0, team1Wins: 0, team2Wins: 0, status: 'EMPTY', matches: [] };
+  }
+
+  const k1 = normKey(normalizeTeamName(team1Name));
+  const k2 = normKey(normalizeTeamName(team2Name));
+
+  const seen = new Set();
+  const direct = [];
+
+  for (const m of rawMatches) {
+    if (!m || !m.t1 || !m.t2) continue;
+
+    // Deduplicación por matchId o href si existe, o clave combinada
+    const dedupKey = m.matchId || m.href || `${normKey(m.t1)}-${normKey(m.t2)}-${m.s1}-${m.s2}-${m.event || ''}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    const mk1 = normKey(normalizeTeamName(m.t1));
+    const mk2 = normKey(normalizeTeamName(m.t2));
+
+    let isDirect = false;
+    let t1IsFirst = true;
+
+    if (!k1 || !k2) {
+      // Sin nombres de referencia (compatibilidad por IDs solos)
+      isDirect = true;
+      t1IsFirst = true;
+    } else if (mk1 === k1 && mk2 === k2) {
+      isDirect = true;
+      t1IsFirst = true;
+    } else if (mk1 === k2 && mk2 === k1) {
+      isDirect = true;
+      t1IsFirst = false;
     }
-    return { total: Math.min(scores.length, 10), team1Wins: t1, team2Wins: t2 };
+
+    if (!isDirect) continue;
+
+    // Validar scores numéricos
+    const s1 = typeof m.s1 === 'number' && !isNaN(m.s1) ? m.s1 : null;
+    const s2 = typeof m.s2 === 'number' && !isNaN(m.s2) ? m.s2 : null;
+
+    if (s1 === null || s2 === null) continue;
+
+    const scoreTeam1 = t1IsFirst ? s1 : s2;
+    const scoreTeam2 = t1IsFirst ? s2 : s1;
+
+    let winner = null;
+    if (scoreTeam1 > scoreTeam2) winner = 'team1';
+    else if (scoreTeam2 > scoreTeam1) winner = 'team2';
+    // Si hay empate o 0-0, winner queda null (Zero Fake Data)
+
+    direct.push({
+      matchId: m.matchId || null,
+      team1: t1IsFirst ? m.t1 : m.t2,
+      team2: t1IsFirst ? m.t2 : m.t1,
+      scoreTeam1,
+      scoreTeam2,
+      winner,
+      event: m.event || ''
+    });
+  }
+
+  const validSubset = direct.slice(0, 10);
+  let t1Wins = 0, t2Wins = 0;
+
+  for (const m of validSubset) {
+    if (m.winner === 'team1') t1Wins++;
+    else if (m.winner === 'team2') t2Wins++;
+  }
+
+  return {
+    total: validSubset.length,
+    team1Wins: t1Wins,
+    team2Wins: t2Wins,
+    status: validSubset.length > 0 ? 'COMPLETE' : 'EMPTY',
+    matches: validSubset
+  };
+}
+
+/**
+ * Head-to-head estructurado entre dos equipos desde el DOM de HLTV.
+ */
+async function getH2H(team1Id, team2Id, team1Name = '', team2Name = '') {
+  try {
+    const rawMatches = await fetchHLTV(`https://www.hltv.org/results?team=${team1Id}&team=${team2Id}`, `
+      const cons = document.querySelectorAll('.result-con');
+      const seen = new Set();
+      const out = [];
+      cons.forEach(con => {
+        const link = con.querySelector('a[href*="/matches/"]') || con.closest('a[href*="/matches/"]');
+        const href = link ? link.getAttribute('href') : null;
+        const matchId = href ? (href.match(/\\/matches\\/(\\d+)\\//) || [])[1] : null;
+        if (matchId && seen.has(matchId)) return;
+        if (matchId) seen.add(matchId);
+
+        const teams = con.querySelectorAll('.team');
+        const scoreEl = con.querySelector('.result-score');
+        const evEl = con.querySelector('.event-name') || con.querySelector('.event');
+        if (teams.length >= 2 && scoreEl) {
+          const sm = (scoreEl.textContent || '').match(/(\\d+)\\D+(\\d+)/);
+          if (sm) {
+            out.push({
+              matchId,
+              href,
+              t1: teams[0].textContent.trim(),
+              t2: teams[1].textContent.trim(),
+              s1: parseInt(sm[1], 10),
+              s2: parseInt(sm[2], 10),
+              event: evEl ? evEl.textContent.trim() : ''
+            });
+          }
+        }
+      });
+      return out;
+    `);
+
+    return parseH2HMatches(rawMatches || [], team1Name, team2Name);
   } catch (err) {
     console.error('[HLTV] Error H2H:', err.message);
-    return { total: 0, team1Wins: 0, team2Wins: 0 };
+    return { total: 0, team1Wins: 0, team2Wins: 0, status: 'FAILED', matches: [], error: err.message };
   }
 }
 
@@ -469,137 +594,89 @@ function getSharedEvent(res1, res2, team1Name, team2Name) {
 }
 
 /**
- * Análisis completo de un enfrentamiento (rápido + por competencia).
+ * Obtiene los datos del enfrentamiento desde HLTV normalizados al contrato común.
  */
-async function analyzeMatchup(team1Name, team2Name) {
-  console.log(`[HLTV] ===== ${team1Name} vs ${team2Name} =====`);
+async function getMatchupData(team1Name, team2Name) {
+  const norm1 = normalizeTeamName(team1Name);
+  const norm2 = normalizeTeamName(team2Name);
 
-  const A = {
-    team1: { name: normalizeTeamName(team1Name), data: null, probability: 50, found: false },
-    team2: { name: normalizeTeamName(team2Name), data: null, probability: 50, found: false },
-    h2h: null,
-    sharedEvent: null,   // competencia detectada donde se enfrentan hoy
-    recommendation: '',
-    confidence: 0,
-    verdict: '',
-    verdictLevel: 'gray',
-    factors: [],
-    dataQuality: 'none'
-  };
-
-  // resolveTeam(t1) hace la primera petición (ranking) y calienta Cloudflare.
   const r1 = await resolveTeam(team1Name);
   const r2 = await resolveTeam(team2Name);
-  A.team1.found = !!r1;
-  A.team2.found = !!r2;
 
-  if (!r1 && !r2) {
-    A.recommendation = 'Sin datos de HLTV';
-    A.verdict = `No encontré ${A.team1.name} ni ${A.team2.name} en HLTV. Probá "Conectar HLTV" o guiate por el % de la comunidad.`;
-    A.verdictLevel = 'gray';
-    return A;
+  const found1 = !!r1;
+  const found2 = !!r2;
+
+  if (!found1 && !found2) {
+    return {
+      source: 'hltv',
+      status: 'UNAVAILABLE',
+      team1: { name: norm1, found: false, ranking: null, winrate: null, wins: 0, losses: 0, event: '', eventWins: 0, eventLosses: 0, eventTotal: 0, eventFallback: false },
+      team2: { name: norm2, found: false, ranking: null, winrate: null, wins: 0, losses: 0, event: '', eventWins: 0, eventLosses: 0, eventTotal: 0, eventFallback: false },
+      h2h: { total: 0, team1Wins: 0, team2Wins: 0 },
+      sharedEvent: null
+    };
   }
 
-  // Resultados de ambos + H2H EN PARALELO (cookie ya caliente)
   let res1 = [], res2 = [];
   const tasks = [];
-  if (r1) tasks.push(getTeamResults(r1.id, A.team1.name).then(x => { res1 = x; }));
-  if (r2) tasks.push(getTeamResults(r2.id, A.team2.name).then(x => { res2 = x; }));
-  if (r1 && r2) tasks.push(getH2H(r1.id, r2.id).then(x => { A.h2h = x; }));
+  let h2h = { total: 0, team1Wins: 0, team2Wins: 0 };
+  if (r1) tasks.push(getTeamResults(r1.id, norm1).then(x => { res1 = x; }));
+  if (r2) tasks.push(getTeamResults(r2.id, norm2).then(x => { res2 = x; }));
+  if (r1 && r2) tasks.push(getH2H(r1.id, r2.id, norm1, norm2).then(x => { h2h = x; }));
   await Promise.all(tasks);
 
-  A.team1.data = buildTeamData(r1, res1);
-  A.team2.data = buildTeamData(r2, res2);
-  A.dataQuality = (r1 && r2) ? 'full' : 'partial';
+  const d1 = buildTeamData(r1, res1);
+  const d2 = buildTeamData(r2, res2);
 
-  // Detectar la competencia en que están jugando hoy (evento compartido)
-  const shared = getSharedEvent(res1, res2, A.team1.name, A.team2.name);
-  if (shared) {
-    A.sharedEvent = shared.event;
-    console.log(`[HLTV] Competencia detectada: "${shared.event}" (fuente: ${shared.source})`);
+  const shared = getSharedEvent(res1, res2, norm1, norm2);
+
+  let status = 'PARTIAL';
+  if (found1 && found2 && (d1?.ranking || d1?.wins + d1?.losses > 0) &&
+                          (d2?.ranking || d2?.wins + d2?.losses > 0)) {
+    status = 'COMPLETE';
   }
 
-  // ---- Scoring ----
-  let s1 = 0, s2 = 0;
-  const d1 = A.team1.data, d2 = A.team2.data;
+  return {
+    source: 'hltv',
+    status,
+    team1: {
+      name: norm1,
+      found: found1,
+      ranking: d1?.ranking || null,
+      winrate: d1?.winrate != null ? d1.winrate : null,
+      wins: d1?.wins || 0,
+      losses: d1?.losses || 0,
+      event: d1?.event || '',
+      eventWins: d1?.eventWins || 0,
+      eventLosses: d1?.eventLosses || 0,
+      eventTotal: d1?.eventTotal || 0,
+      eventFallback: !!d1?.eventFallback
+    },
+    team2: {
+      name: norm2,
+      found: found2,
+      ranking: d2?.ranking || null,
+      winrate: d2?.winrate != null ? d2.winrate : null,
+      wins: d2?.wins || 0,
+      losses: d2?.losses || 0,
+      event: d2?.event || '',
+      eventWins: d2?.eventWins || 0,
+      eventLosses: d2?.eventLosses || 0,
+      eventTotal: d2?.eventTotal || 0,
+      eventFallback: !!d2?.eventFallback
+    },
+    h2h,
+    sharedEvent: shared ? shared.event : null
+  };
+}
 
-  // Ranking
-  if (d1?.ranking && d2?.ranking) {
-    const diff = d2.ranking - d1.ranking;
-    const bonus = Math.min(Math.abs(diff) * 1.5, 25);
-    if (diff > 0) s1 += bonus; else s2 += bonus;
-    A.factors.push(`📊 Ranking mundial: ${A.team1.name} #${d1.ranking} vs ${A.team2.name} #${d2.ranking}`);
-  } else if (d1?.ranking) {
-    s1 += 12;
-    A.factors.push(`📊 ${A.team1.name} está #${d1.ranking} en el mundo; ${A.team2.name} sin ranking top`);
-  } else if (d2?.ranking) {
-    s2 += 12;
-    A.factors.push(`📊 ${A.team2.name} está #${d2.ranking} en el mundo; ${A.team1.name} sin ranking top`);
-  }
-
-  // Forma reciente (últimos partidos)
-  if (d1?.winrate != null && d2?.winrate != null) {
-    const diff = d1.winrate - d2.winrate;
-    const bonus = Math.min(Math.abs(diff) * 0.35, 14);
-    if (diff > 0) s1 += bonus; else s2 += bonus;
-    A.factors.push(`📈 Forma reciente: ${A.team1.name} ${d1.wins}V-${d1.losses}D (${d1.winrate}%) vs ${A.team2.name} ${d2.wins}V-${d2.losses}D (${d2.winrate}%)`);
-  }
-
-  // Forma EN LA COMPETENCIA (pesa más: es el contexto del partido)
-  const e1 = eventWinrate(d1), e2 = eventWinrate(d2);
-  if (e1 != null && e2 != null) {
-    const diff = e1 - e2;
-    const bonus = Math.min(Math.abs(diff) * 0.45, 18);
-    if (diff > 0) s1 += bonus; else s2 += bonus;
-  }
-  if (d1?.event || d2?.event) {
-    const evName = d1?.event || d2?.event;
-    const tag1 = (d1 && d1.eventTotal > 0) ? `${A.team1.name} ${d1.eventWins}V-${d1.eventLosses}D${d1.eventFallback ? ' (evento previo)' : ''}` : `${A.team1.name} sin datos`;
-    const tag2 = (d2 && d2.eventTotal > 0) ? `${A.team2.name} ${d2.eventWins}V-${d2.eventLosses}D${d2.eventFallback ? ' (evento previo)' : ''}` : `${A.team2.name} sin datos`;
-    A.factors.push(`🏆 En ${evName}: ${tag1} | ${tag2}`);
-  }
-
-  // Head to head
-  if (A.h2h?.total > 0) {
-    s1 += A.h2h.team1Wins * 4;
-    s2 += A.h2h.team2Wins * 4;
-    A.factors.push(`⚔️ Historial directo: ${A.team1.name} ${A.h2h.team1Wins} - ${A.h2h.team2Wins} ${A.team2.name}`);
-  }
-
-  // Solo uno con datos
-  if (r1 && !r2) { s1 += 15; A.factors.push(`ℹ️ Solo ${A.team1.name} tiene datos en HLTV`); }
-  if (r2 && !r1) { s2 += 15; A.factors.push(`ℹ️ Solo ${A.team2.name} tiene datos en HLTV`); }
-
-  // Normalizar (blend 78% datos / 22% base)
-  const total = s1 + s2;
-  if (total > 0) {
-    const raw1 = (s1 / total) * 100;
-    A.team1.probability = Math.max(15, Math.min(85, Math.round(raw1 * 0.78 + 50 * 0.22)));
-    A.team2.probability = 100 - A.team1.probability;
-  }
-
-  const fav = A.team1.probability >= A.team2.probability ? A.team1 : A.team2;
-  const und = A.team1.probability >= A.team2.probability ? A.team2 : A.team1;
-  const diff = fav.probability - und.probability;
-
-  A.recommendation = fav.name;
-  A.confidence = fav.probability;
-
-  if (A.factors.length === 0) {
-    A.verdict = `Datos limitados de HLTV. ${fav.name} sale levemente favorito pero con poca info. Apuesta chica.`;
-    A.verdictLevel = 'gray';
-  } else if (diff >= 24) {
-    A.verdict = `APOSTAR A ${fav.name.toUpperCase()} — ventaja sólida (${fav.probability}% vs ${und.probability}%). Buena si el multiplicador es mayor a 1.2x.`;
-    A.verdictLevel = 'green';
-  } else if (diff >= 12) {
-    A.verdict = `${fav.name.toUpperCase()} FAVORITO — ventaja moderada (${fav.probability}% vs ${und.probability}%). Apostá con cabeza, no todo.`;
-    A.verdictLevel = 'yellow';
-  } else {
-    A.verdict = `PARTIDO PAREJO — apenas ${diff}% de diferencia. Conviene SKIP o apuesta mínima. Mucho riesgo.`;
-    A.verdictLevel = 'red';
-  }
-
-  return A;
+/**
+ * Delegación principal hacia cs2-stats-service para asegurar que todas
+ * las llamadas existentes a analyzeMatchup gocen del fallback robusto.
+ */
+async function analyzeMatchup(team1Name, team2Name) {
+  const cs2StatsService = require('./cs2-stats-service');
+  return cs2StatsService.analyzeMatchup(team1Name, team2Name, { hltvProvider: { getMatchupData } });
 }
 
 /**
@@ -621,4 +698,186 @@ function openHLTVConnect() {
   return win;
 }
 
-module.exports = { analyzeMatchup, searchTeam, normalizeTeamName, openHLTVConnect };
+async function searchPlayerCandidates(playerName) {
+  const query = String(playerName || '').trim();
+  if (!query) return [];
+  const ck = 'player-candidates:' + normKey(query);
+  const cached = searchCache.get(ck);
+  if (cached && Date.now() - cached.ts < SEARCH_TTL) return cached.result;
+
+  let results = [];
+  try {
+    results = await fetchHLTV(`https://www.hltv.org/search?query=${encodeURIComponent(query)}`, `
+      const seen = new Set();
+      const out = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/player/"]'));
+      for (const a of links) {
+        const href = a.getAttribute('href') || '';
+        const m = href.match(/\\/player\\/(\\d+)\\/([\\w%.-]+)\\/?$/);
+        if (!m || seen.has(m[1])) continue;
+        const name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (!name || name.length > 24) continue;
+        let team = null;
+        const tr = a.closest('tr');
+        if (tr) {
+          const tds = Array.from(tr.querySelectorAll('td')).map(td => (td.textContent || '').replace(/\\s+/g, ' ').trim());
+          team = tds.find(t => t && t !== name && !/^player$/i.test(t) && t.length < 40) || null;
+        }
+        if (!team) {
+          const box = a.closest('td, .search, li, div');
+          const nearby = box ? (box.innerText || '').replace(/\\s+/g, ' ').trim() : '';
+          const rest = nearby.replace(name, '').trim();
+          if (rest && rest.length < 40 && !/player of the week/i.test(rest)) team = rest;
+        }
+        seen.add(m[1]);
+        out.push({ id: m[1], slug: decodeURIComponent(m[2]), name, team });
+      }
+      return out;
+    `) || [];
+  } catch (err) {
+    console.error(`[HLTV] Error buscando jugador ${query}:`, err.message);
+  }
+
+  searchCache.set(ck, { result: results, ts: Date.now() });
+  return results;
+}
+
+async function searchPlayer(playerName, teamHints = []) {
+  const query = String(playerName || '').trim();
+  if (!query) return null;
+  const ck = 'player:' + nickKey(query) + ':' + (teamHints || []).map(nickKey).join(',');
+  const cached = searchCache.get(ck);
+  if (cached && Date.now() - cached.ts < SEARCH_TTL) return cached.result;
+
+  const results = await searchPlayerCandidates(query);
+  const resolved = pickPlayerFromSearch(results, query, teamHints);
+  if (resolved) {
+    console.log(`[HLTV] Jugador OK: ${query} -> /player/${resolved.id}/${resolved.slug}${resolved.team ? ' (' + resolved.team + ')' : ''}`);
+  } else {
+    console.log(`[HLTV] Jugador no encontrado: ${query}`);
+  }
+  searchCache.set(ck, { result: resolved, ts: Date.now() });
+  return resolved;
+}
+
+/**
+ * Promedio real de kills por mapa reciente del jugador (HLTV).
+ * ZERO FAKE DATA: si no hay mapas, maps = [] y found = false.
+ */
+const PLAYER_MAPS_EXTRACTOR = `
+  const rows = [];
+  const tables = Array.from(document.querySelectorAll('table'));
+  const table = tables.find(t => /k\\s*-\\s*d|rating/i.test((t.innerText || '').slice(0, 800)))
+    || document.querySelector('.stats-table, table.stats-table')
+    || tables[0];
+  const trs = table
+    ? table.querySelectorAll('tbody tr, tr')
+    : document.querySelectorAll('.stats-table tbody tr, table.stats-table tr');
+  trs.forEach(tr => {
+    const tds = Array.from(tr.querySelectorAll('td'));
+    if (tds.length < 3) return;
+    const mapEl = tr.querySelector('.statsMapPlayed, .stats-match-map, td.statsMapPlayed, .map-name, .stats-map');
+    rows.push({
+      date: (tds[0].textContent || '').trim(),
+      map: mapEl ? (mapEl.textContent || '').trim() : null,
+      opponent: null,
+      cells: tds.map(td => (td.textContent || '').replace(/\\s+/g, ' ').trim()),
+      tableText: ''
+    });
+  });
+  return {
+    rows: rows.slice(0, 40),
+    text: table ? (table.innerText || '') : (document.body.innerText || '')
+  };
+`;
+
+async function scrapePlayerMatchMaps(resolved) {
+  const end = new Date();
+  const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+  const fmt = d => d.toISOString().slice(0, 10);
+  const urls = [
+    `https://www.hltv.org/stats/players/matches/${resolved.id}/${resolved.slug}?startDate=${fmt(start)}&endDate=${fmt(end)}`,
+    `https://www.hltv.org/stats/players/matches/${resolved.id}/${resolved.slug}`
+  ];
+
+  for (const url of urls) {
+    try {
+      const data = await fetchHLTV(url, PLAYER_MAPS_EXTRACTOR);
+      const rawRows = Array.isArray(data) ? data : (data && data.rows) || [];
+      let maps = parsePlayerMatchRows(rawRows);
+      if (!maps.length) {
+        const text = (data && data.text) || '';
+        maps = parsePlayerMatchesFromText(text);
+      }
+      if (maps.length) return maps.slice(0, 15);
+    } catch (e) {
+      console.error('[HLTV] player matches', resolved.slug || resolved.id, e.message);
+    }
+  }
+  return [];
+}
+
+async function getPlayerKillStats(playerName, teamHints = []) {
+  const parsed = splitPlayerTeamHint(playerName);
+  const query = parsed.player || playerName;
+  const hints = [...(teamHints || [])];
+  if (parsed.team) hints.push(parsed.team);
+
+  const candidates = await searchPlayerCandidates(query);
+  const picked = pickPlayerFromSearch(candidates, query, hints);
+  const exact = (candidates || []).filter(c =>
+    nickKey(c.name) === nickKey(query) || nickKey(c.slug) === nickKey(query)
+  );
+  const ordered = [];
+  const pushUnique = (p) => {
+    if (!p || ordered.some(x => x.id === p.id)) return;
+    ordered.push(p);
+  };
+  pushUnique(picked);
+  exact.forEach(pushUnique);
+
+  if (!ordered.length) {
+    return { found: false, playerName: query, source: 'hltv', maps: [] };
+  }
+
+  for (const resolved of ordered.slice(0, 3)) {
+    const maps = await scrapePlayerMatchMaps(resolved);
+    console.log(`[HLTV] ${resolved.name || query}: ${maps.length} mapas con kills`);
+    if (maps.length) {
+      return {
+        found: true,
+        playerName: resolved.name || playerName,
+        source: 'hltv',
+        playerId: resolved.id,
+        slug: resolved.slug,
+        team: resolved.team || null,
+        maps
+      };
+    }
+  }
+
+  return {
+    found: false,
+    playerName: picked?.name || playerName,
+    source: 'hltv',
+    maps: []
+  };
+}
+
+module.exports = {
+  analyzeMatchup,
+  getMatchupData,
+  searchTeam,
+  searchPlayer,
+  searchPlayerCandidates,
+  getPlayerKillStats,
+  parsePlayerMatchRows,
+  parsePlayerMatchesFromText,
+  pickPlayerFromSearch,
+  normalizeTeamName,
+  openHLTVConnect,
+  getH2H,
+  parseH2HMatches,
+  normKey
+};
+

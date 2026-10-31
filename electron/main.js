@@ -1,6 +1,10 @@
 const { app, BrowserWindow, ipcMain, Notification, shell, Menu, session } = require('electron');
 const path = require('path');
 const axios = require('axios');
+const configStore = require('./config-store');
+const { createSeriesTracker, SERIES_STATUS } = require('./series-tracker');
+
+const seriesTracker = createSeriesTracker();
 
 // Deshabilitar aceleración de hardware y sandbox de GPU en Windows para evitar que
 // reCAPTCHA / Cloudflare Turnstile en id.kick.com provoquen crashes de proceso
@@ -377,9 +381,14 @@ ipcMain.handle('window-is-maximized', () => {
 // Predicciones CS2 - HLTV Analysis + Forg1 Scraper
 // ============================================================
 
-const { analyzeMatchup } = require('./hltv');
+const { analyzeMatchup, getPlayerKillStats, openHLTVConnect, normalizeTeamName, normKey } = require('./hltv');
 const { scrapeForg1Predictions, openForg1Login } = require('./forg1-scraper');
-const { openHLTVConnect } = require('./hltv');
+const {
+  extractPlayerNameFromQuestion,
+  isKillRangeLabel,
+  scoreKillPrediction,
+  scoreKillsDuel
+} = require('./player-kills');
 const telegram = require('./telegram');
 console.log('[Main] Módulo Telegram cargado. isConfigured:', telegram.isConfigured());
 
@@ -475,20 +484,38 @@ ipcMain.handle('hltv-connect', async () => {
 let predMonitorInterval = null;
 let isPredMonitoring = false;
 let knownPredictions = new Map();    // sig -> pred completo, para poder usar datos al cerrar
-let notifiedPredictions = new Set(); // predicciones ya notificadas por Telegram (no repetir)
+let notifiedPredictions = new Set(); // aviso rápido ya enviado
+let notifiedFull = new Set();        // análisis / pick ya enviado
+let notifyingPredictions = new Set(); // envío en curso, evita duplicar escaneo vs monitor
 let recentlyClosed = new Map();      // sig -> timestamp, cooldown 5min para no re-notificar
+let telegramChain = Promise.resolve();
+
+function enqueueTelegram(fn) {
+  const run = telegramChain.then(fn, fn);
+  telegramChain = run.then(() => {}, () => {});
+  return run;
+}
+
+function withTimeout(promise, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error(label || `timeout ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
 
 // La firma prioriza el ID de Forg1 si existe (estable ante cambios de texto/odds).
-// Fallback: equipos ordenados o la pregunta.
+// Fallback: equipos ordenados + mapa/pregunta para evitar colisiones entre mapas de la misma serie.
 function predictionSignature(pred) {
   if (pred.id) return `forg1::${pred.id}`;
   const teams = (pred.teams || [])
     .map(t => (t.name || '').toLowerCase().trim().replace(/\s+/g, ''))
     .sort()
     .join('::');
-  // Fallback: si no hay equipos, usar la pregunta
-  if (!teams) return (pred.question || '').toLowerCase().trim();
-  return teams;
+  const mapSuffix = pred.mapNumber != null ? `::map${pred.mapNumber}` : '';
+  const q = (pred.question || '').toLowerCase().trim();
+  if (!teams) return q;
+  return `${teams}${mapSuffix}::${q}`;
 }
 
 // ----- Telegram: armado y envío de avisos de predicciones -----
@@ -496,160 +523,376 @@ function escTg(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Construye el mensaje HTML para Telegram con la estadística y la recomendación.
-function buildPredictionMessage(pred, a, isNew) {
-  const predType = pred.predType || 'team-matchup';
-  const lines = [isNew ? '🆕 <b>Nueva predicción en Forg1</b>' : '⏳ <b>Predicción en curso</b>'];
+function listOptions(opts) {
+  return (opts || []).map(o => `  • ${escTg(o.name || o.label)} — ${escTg(o.percentage || '—')}`);
+}
 
-  // Competencia detectada
-  if (a && a.sharedEvent) lines.push(`🏆 <b>${escTg(a.sharedEvent)}</b>`);
+function appendMatchupStats(lines, a, status) {
+  if (!a || a.dataQuality === 'none' || !a.recommendation) {
+    if (status === 'WAITING_RESULT') lines.push('🔒 Ya no se aceptan apuestas para esta predicción.');
+    else if (status === 'OPEN') lines.push('ℹ️ Sin estadísticas en HLTV, BO3.gg ni el ranking de Valve — guiate por el % de la comunidad.');
+    return;
+  }
 
-  if (pred.question) lines.push(`❓ <i>${escTg(pred.question)}</i>`);
-
-  // Si tiene múltiples mercados, mostrar cada uno con sus selecciones
-  if (pred.markets && pred.markets.length > 1) {
-    for (let mi = 0; mi < pred.markets.length; mi++) {
-      const m = pred.markets[mi];
-      lines.push('');
-      lines.push(`📌 <b>${escTg(m.question)}</b>`);
-      const mOpts = m.selections || [];
-      for (const o of mOpts) {
-        lines.push(`  • ${escTg(o.name || o.label)} — ${escTg(o.percentage || '—')}`);
-      }
-    }
+  const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : a.verdictLevel === 'red' ? '🛑' : 'ℹ️';
+  if (status === 'OPEN') {
+    lines.push(`${icon} <b>Apostar a: ${escTg(a.recommendation)}</b>${a.confidence ? ` (${a.confidence}%)` : ''}`);
   } else {
-    // Mercado único: mostrar TODAS las opciones
-    const opts = pred.options || pred.teams || [];
-    if (opts.length > 0) {
-      lines.push('');
-      if (predType === 'kills-range') {
-      // Predicción de rangos de kills
-      lines.push(`🎯 <b>Opciones:</b>`);
-      for (const o of opts) {
-        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
-      }
-      lines.push('');
-      lines.push(`👥 <b>Recomendación:</b> guiate por el % de la comunidad.`);
-      lines.push(`ℹ️ Este tipo de predicción no tiene análisis de stats disponible.`);
-    } else if (predType === 'yes-no') {
-      lines.push(`🎯 <b>Opciones:</b>`);
-      for (const o of opts) {
-        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
-      }
-      lines.push('');
-      lines.push(`👥 Sin análisis de stats para esta predicción — guiate por la comunidad.`);
-    } else if (predType === 'ot' && opts.length > 2) {
-      // 3 opciones: equipo A / OT / equipo B
-      lines.push(`🎮 <b>Opciones con OT:</b>`);
-      for (const o of opts) {
-        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
-      }
-      if (a && a.recommendation) {
-        lines.push('');
-        const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : '🛑';
-        lines.push(`${icon} <b>Equipos: ${escTg(a.team1?.name)} vs ${escTg(a.team2?.name)}</b> (sin considerar OT)`);
-        if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
-      }
-    } else if (predType === 'team-matchup' && opts.length === 2) {
-      const t1 = opts[0], t2 = opts[1];
-      lines.push(`🎮 <b>${escTg(t1.name)}</b> vs <b>${escTg(t2.name)}</b>`);
-      lines.push(`👥 Comunidad: ${escTg(t1.percentage || '—')} / ${escTg(t2.percentage || '—')}`);
+    lines.push(`${icon} Favorito por stats: <b>${escTg(a.recommendation)}</b>${a.confidence ? ` (${a.confidence}%)` : ''}`);
+  }
+  if (a.team1?.probability != null && a.team2?.probability != null) {
+    lines.push(`📈 Stats: ${escTg(a.team1.name)} ${a.team1.probability}% · ${escTg(a.team2.name)} ${a.team2.probability}%`);
+  }
+  if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
 
-      if (a && a.dataQuality && a.dataQuality !== 'none' && a.recommendation) {
-        const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : a.verdictLevel === 'red' ? '🛑' : 'ℹ️';
-        lines.push('');
-        lines.push(`${icon} <b>Apostar a: ${escTg(a.recommendation)}</b> (${a.confidence}%)`);
-        if (a.team1?.probability != null && a.team2?.probability != null) {
-          lines.push(`📈 Stats: ${escTg(a.team1.name)} ${a.team1.probability}% · ${escTg(a.team2.name)} ${a.team2.probability}%`);
-        }
-        if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
-
-        const d1 = a.team1?.data, d2 = a.team2?.data;
-        const stat = [];
-        if ((d1?.ranking) || (d2?.ranking)) {
-          stat.push(`• Ranking: ${d1?.ranking ? '#' + d1.ranking : '—'} vs ${d2?.ranking ? '#' + d2.ranking : '—'}`);
-        }
-        if (d1?.winrate != null || d2?.winrate != null) {
-          stat.push(`• Winrate: ${d1?.winrate != null ? d1.winrate + '%' : '—'} vs ${d2?.winrate != null ? d2.winrate + '%' : '—'}`);
-        }
-        if (d1 && d2 && (d1.wins + d1.losses > 0 || d2.wins + d2.losses > 0)) {
-          stat.push(`• Últimos: ${d1.wins}V-${d1.losses}D vs ${d2.wins}V-${d2.losses}D`);
-        }
-        const ev = d1?.event || d2?.event || '';
-        if (ev && (d1?.eventTotal > 0 || d2?.eventTotal > 0)) {
-          const v1 = (d1?.eventTotal > 0) ? `${d1.eventWins}V-${d1.eventLosses}D` : '—';
-          const v2 = (d2?.eventTotal > 0) ? `${d2.eventWins}V-${d2.eventLosses}D` : '—';
-          stat.push(`• ${escTg(ev)}: ${v1} vs ${v2}`);
-        }
-        if (a.h2h?.total > 0) stat.push(`• H2H: ${a.h2h.team1Wins} - ${a.h2h.team2Wins}`);
-        if (stat.length) {
-          lines.push('');
-          lines.push('📊 <b>Estadísticas (HLTV)</b>');
-          lines.push(stat.join('\n'));
-        }
-      } else {
-        lines.push('');
-        lines.push('ℹ️ Sin stats de HLTV — guiate por el % de la comunidad (conectá HLTV).');
-      }
-    } else {
-      // Otro tipo o más de 2 opciones sin clasificar
-      lines.push(`🎯 <b>Opciones:</b>`);
-      for (const o of opts) {
-        lines.push(`  • ${escTg(o.name)} — ${escTg(o.percentage || '—')}`);
-      }
-      lines.push('');
-      lines.push(`👥 Guiate por el porcentaje de la comunidad.`);
-    }
+  const d1 = a.team1?.data, d2 = a.team2?.data;
+  const stat = [];
+  if ((d1?.ranking) || (d2?.ranking)) {
+    stat.push(`• Ranking: ${d1?.ranking ? '#' + d1.ranking : '—'} vs ${d2?.ranking ? '#' + d2.ranking : '—'}`);
+  }
+  if (d1?.winrate != null || d2?.winrate != null) {
+    stat.push(`• Winrate: ${d1?.winrate != null ? d1.winrate + '%' : '—'} vs ${d2?.winrate != null ? d2.winrate + '%' : '—'}`);
+  }
+  if (d1 && d2 && (d1.wins + d1.losses > 0 || d2.wins + d2.losses > 0)) {
+    stat.push(`• Últimos: ${d1.wins}V-${d1.losses}D vs ${d2.wins}V-${d2.losses}D`);
+  }
+  const ev = d1?.event || d2?.event || '';
+  if (ev && (d1?.eventTotal > 0 || d2?.eventTotal > 0)) {
+    const v1 = (d1?.eventTotal > 0) ? `${d1.eventWins}V-${d1.eventLosses}D` : '—';
+    const v2 = (d2?.eventTotal > 0) ? `${d2.eventWins}V-${d2.eventLosses}D` : '—';
+    stat.push(`• ${escTg(ev)}: ${v1} vs ${v2}`);
+  }
+  if (a.h2h?.total > 0) stat.push(`• H2H: ${a.h2h.team1Wins} - ${a.h2h.team2Wins}`);
+  if (stat.length) {
+    const srcName = a.source === 'bo3gg' ? 'BO3.gg' : (a.source === 'vrs' ? 'Ranking Valve' : 'HLTV');
+    lines.push('');
+    lines.push(`📊 <b>Estadísticas (${srcName})</b>`);
+    lines.push(stat.join('\n'));
   }
 }
 
-  // Apuesta del usuario si la tiene
+function appendKillsDuelStats(lines, a, status) {
+  if (a && a.kind === 'kills-duel' && a.dataQuality !== 'none') {
+    const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : 'ℹ️';
+    for (const p of a.players || []) {
+      const avg = p.avgKills != null ? `${p.avgKills} kills/mapa` : 'sin datos';
+      const sample = p.mapsSampled ? ` · ${p.mapsSampled} mapas` : '';
+      lines.push(`  • ${escTg(p.name)} — ${avg}${sample}${p.percentage ? ` · comunidad ${escTg(p.percentage)}` : ''}`);
+    }
+    lines.push('');
+    if (a.recommendation) {
+      const verb = status === 'OPEN' ? 'Apostar a' : 'Más propenso';
+      lines.push(`${icon} <b>${verb}: ${escTg(a.recommendation)}</b>${a.confidence ? ` (${a.confidence}%)` : ''}`);
+    }
+    if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
+    return;
+  }
+  lines.push('ℹ️ Sin promedio de kills de estos jugadores — guiate por el % de la comunidad.');
+}
+
+function appendKillStats(lines, a, status) {
+  if (a && a.kind === 'kills' && a.dataQuality !== 'none') {
+    const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : 'ℹ️';
+    lines.push(`📊 <b>${escTg(a.playerName)}</b> · ${a.avgKills} kills/mapa (últimos ${a.mapsSampled})`);
+    if (a.typicalLow != null && a.typicalHigh != null) {
+      lines.push(`📉 Rango habitual: ${a.typicalLow}–${a.typicalHigh}`);
+    }
+    if (a.recommendation) {
+      const verb = status === 'OPEN' ? 'Apostar a' : 'Más probable';
+      lines.push(`${icon} <b>${verb}: ${escTg(a.recommendation)}</b>${a.hitRate != null ? ` (${a.hitRate}% de mapas recientes)` : ''}`);
+    }
+    if (a.verdict) lines.push(`🧠 ${escTg(a.verdict)}`);
+    return;
+  }
+  lines.push('ℹ️ Sin promedio de kills del jugador — guiate por el % de la comunidad.');
+}
+
+function buildPredictionMessage(pred, a, isNew, extra = {}) {
+  const predType = pred.predType || 'team-matchup';
+  const status = pred.status || 'OPEN';
+  const lines = [];
+
+  if (!extra.skipHeader) {
+    if (status === 'WAITING_RESULT') lines.push('🔒 <b>Cerrada — esperando resultado</b>');
+    else if (status === 'RESOLVED') lines.push('🏁 <b>Predicción finalizada</b>');
+    else if (status === 'UNKNOWN') lines.push('ℹ️ <b>Predicción CS2</b>');
+    else lines.push(isNew ? '🆕 <b>Nueva predicción abierta</b>' : '🟢 <b>Predicción abierta</b>');
+  }
+
+  if (a && a.sharedEvent) lines.push(`🏆 <b>${escTg(a.sharedEvent)}</b>`);
+  if (pred.mapNumber != null) {
+    lines.push(`🗺️ <b>Mapa ${pred.mapNumber}</b>${pred.mapName ? ` (<i>${escTg(pred.mapName)}</i>)` : ''}`);
+  }
+  if (pred.seriesScore && (pred.seriesScore.team1 > 0 || pred.seriesScore.team2 > 0)) {
+    lines.push(`⚔️ Serie: <b>${pred.seriesScore.team1} - ${pred.seriesScore.team2}</b>${pred.format && pred.format !== 'UNKNOWN' ? ` (${pred.format})` : ''}`);
+  }
+
+  if (pred.question) lines.push(`❓ <b>${escTg(pred.question)}</b>`);
+  if (status === 'RESOLVED' && pred.result) {
+    lines.push(`🏆 Ganador oficial: <b>${escTg(pred.result)}</b>`);
+  }
+
+  const opts = pred.options || pred.teams || [];
+  lines.push('');
+
+  if (pred.markets && pred.markets.length > 1) {
+    for (const m of pred.markets) {
+      lines.push(`📌 <b>${escTg(m.question)}</b>`);
+      lines.push(...listOptions(m.selections || []));
+      if (m.status === 'RESOLVED' && m.result) {
+        lines.push(`  🏆 Resultado: <b>${escTg(m.result)}</b>`);
+      }
+      lines.push('');
+    }
+  } else if (predType === 'kills-range') {
+    lines.push('🎯 <b>Rangos</b>');
+    lines.push(...listOptions(opts));
+    lines.push('');
+    appendKillStats(lines, a, status);
+  } else if (predType === 'kills-duel') {
+    lines.push('🔫 <b>Quién mata más</b>');
+    lines.push('');
+    appendKillsDuelStats(lines, a, status);
+  } else if (predType === 'yes-no') {
+    lines.push('🎯 <b>Opciones</b>');
+    lines.push(...listOptions(opts));
+    lines.push('');
+    lines.push('👥 Sin análisis de stats — guiate por la comunidad.');
+  } else if (predType === 'ot' && opts.length > 2) {
+    lines.push('🎮 <b>Opciones (incluye OT)</b>');
+    lines.push(...listOptions(opts));
+    lines.push('');
+    appendMatchupStats(lines, a, status);
+  } else if (predType === 'team-matchup' && opts.length === 2) {
+    const t1 = opts[0], t2 = opts[1];
+    lines.push(`🎮 <b>${escTg(t1.name)}</b> vs <b>${escTg(t2.name)}</b>`);
+    lines.push(`👥 Comunidad: ${escTg(t1.percentage || '—')} / ${escTg(t2.percentage || '—')}`);
+    lines.push('');
+    appendMatchupStats(lines, a, status);
+  } else {
+    lines.push('🎯 <b>Opciones</b>');
+    lines.push(...listOptions(opts));
+    lines.push('');
+    lines.push('👥 Guiate por el porcentaje de la comunidad.');
+  }
+
   if (pred.myBet) {
     lines.push('');
     lines.push(`💸 Tu apuesta: <b>${escTg(pred.myBet)} pts</b>${pred.myWin ? ` — ganás <b>${escTg(pred.myWin)}</b>` : ''}`);
   }
 
   lines.push('');
-  if (pred.closesAt) {
+  if (status === 'WAITING_RESULT') lines.push('🔒 Cerrada — esperando resultado');
+  else if (status === 'RESOLVED') lines.push('🏁 Finalizada');
+  else if (status === 'OPEN') {
+    lines.push(pred.closesAt ? `🟢 ABIERTA — cierra en ${escTg(pred.closesAt)}` : '🟢 ABIERTA — podés apostar ahora');
+  } else if (pred.closesAt) {
     lines.push(`⏰ Cierra en ${escTg(pred.closesAt)}`);
-  } else {
-    lines.push('⏰ Predicción abierta');
   }
 
+  return lines.filter((l, i, arr) => !(l === '' && arr[i - 1] === '')).join('\n');
+}
+
+function collectPlayerTeamHints(pred) {
+  const hints = [];
+  const push = (name) => {
+    if (!name) return;
+    const raw = String(name).trim();
+    if (!raw || isKillRangeLabel(raw) || /^ot$/i.test(raw) || /^(sí|si|no)$/i.test(raw)) return;
+    const n = normalizeTeamName(raw);
+    if (n && n.length >= 2 && n.length <= 40) hints.push(n);
+  };
+  try {
+    for (const s of seriesTracker.getActiveSeries()) {
+      push(s.team1 && s.team1.name);
+      push(s.team2 && s.team2.name);
+    }
+  } catch (e) { /* tracker vacío */ }
+  for (const p of knownPredictions.values()) {
+    if (p.predType === 'team-matchup' || p.predType === 'ot') {
+      (p.options || []).forEach(o => push(o.name || o.label));
+    }
+  }
+  if (pred && (pred.predType === 'team-matchup' || pred.predType === 'ot')) {
+    (pred.options || []).forEach(o => push(o.name || o.label));
+  }
+  const seen = new Set();
+  return hints.filter(h => {
+    const k = normKey(h);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+async function analyzePrediction(pred) {
+  const predType = pred.predType || 'team-matchup';
+  const teamHints = collectPlayerTeamHints(pred);
+
+  if (predType === 'kills-range') {
+    const playerName = pred.playerName || extractPlayerNameFromQuestion(pred.question || pred.title);
+    if (!playerName) return null;
+    const stats = await getPlayerKillStats(playerName, teamHints);
+    return scoreKillPrediction(pred.options || pred.markets?.[0]?.selections || [], stats);
+  }
+
+  if (predType === 'kills-duel') {
+    const names = (pred.options || pred.markets?.[0]?.selections || [])
+      .map(o => o.name || o.label)
+      .filter(n => n && !/^ot$/i.test(n) && !isKillRangeLabel(n) && !/^(sí|si|no)$/i.test(n));
+    const stats = [];
+    for (const name of names) {
+      try {
+        const s = await getPlayerKillStats(name, teamHints);
+        stats.push({ ...s, queryName: name, playerName: s.playerName || name });
+      } catch (e) {
+        stats.push({ found: false, playerName: name, queryName: name, maps: [] });
+      }
+    }
+    return scoreKillsDuel(pred.options || [], stats, { mapName: pred.mapName || null });
+  }
+
+  if (predType === 'team-matchup' || predType === 'ot') {
+    const names = (pred.options || pred.teams || [])
+      .map(t => t.name)
+      .filter(n => n && !/^ot$/i.test(n) && !isKillRangeLabel(n));
+    if (names.length < 2) return null;
+    return analyzeMatchup(names[0], names[1]);
+  }
+
+  return null;
+}
+
+function buildQuickPredictionMessage(pred, isNew) {
+  const status = pred.status || 'OPEN';
+  const opts = pred.options || pred.teams || [];
+  const lines = [];
+  if (status === 'OPEN') lines.push(isNew ? '🆕 <b>Nueva predicción abierta</b>' : '🟢 <b>Predicción abierta</b>');
+  else lines.push('ℹ️ <b>Predicción CS2</b>');
+  if (pred.question) lines.push(`❓ <b>${escTg(pred.question)}</b>`);
+  if (opts.length) {
+    lines.push('');
+    lines.push(...listOptions(opts));
+  }
+  lines.push('');
+  lines.push('⏳ Analizando stats… te mando el pick enseguida.');
+  if (pred.closesAt) lines.push(`🟢 ABIERTA — cierra en ${escTg(pred.closesAt)}`);
+  else lines.push('🟢 ABIERTA — podés apostar ahora');
   return lines.join('\n');
 }
 
-// Analiza (si hay dos equipos) y envía el aviso por Telegram.
-// Deduplicado: solo notifica UNA VEZ por predicción (firma única).
-async function notifyTelegramForPrediction(pred, isNew) {
-  if (!telegram.isConfigured()) return;
-  if (!telegram.loadConfig().enabled) return;
+async function notifyTelegramBatch(preds, isNew) {
+  return enqueueTelegram(() => notifyTelegramBatchInner(preds, isNew));
+}
 
-  const sig = predictionSignature(pred);
-  if (notifiedPredictions.has(sig)) {
-    console.log('[Main] Ya notificada:', sig);
+async function notifyTelegramBatchInner(preds, isNew) {
+  const cfg = telegram.loadConfig();
+  if (!telegram.isConfigured() || !cfg.enabled) {
+    console.log('[Main] Telegram omitido:', !telegram.isConfigured() ? 'sin vincular' : 'avisos pausados');
     return;
   }
-  notifiedPredictions.add(sig);
-  console.log('[Main] Notificando Telegram:', { isNew, predType: pred.predType, question: pred?.question });
 
-  let analysis = null;
-  // Solo analizar con HLTV si es un matchup de equipos profesionales
-  const predType = pred.predType || 'team-matchup';
-  if ((predType === 'team-matchup' || predType === 'ot') && pred.teams && pred.teams.length >= 2) {
-    try {
-      analysis = await analyzeMatchup(pred.teams[0].name, pred.teams[1].name);
-    } catch (e) {
-      console.error('[Main] Error analizando para aviso:', e.message);
+  const work = (preds || []).filter(p => {
+    // Solo se avisa lo que se puede apostar. UNKNOWN no es "abierta":
+    // antes se colaban resultados viejos con estado no reconocido.
+    if ((p.status || 'OPEN') !== 'OPEN') return false;
+    const sig = predictionSignature(p);
+    if (notifyingPredictions.has(sig)) {
+      console.log('[Main] Telegram en vuelo:', sig);
+      return false;
     }
+    const needQuick = !notifiedPredictions.has(sig);
+    const needFull = !!p.analysis && !notifiedFull.has(sig);
+    return needQuick || needFull;
+  });
+  if (!work.length) {
+    console.log('[Main] Telegram: nada pendiente de avisar');
+    return;
   }
 
-  const msg = buildPredictionMessage(pred, analysis, isNew);
-  await telegram.sendMessage(msg);
+  for (const pred of work) notifyingPredictions.add(predictionSignature(pred));
+
+  try {
+    const fresh = work.filter(p => !notifiedPredictions.has(predictionSignature(p)));
+    const openCount = fresh.filter(p => (p.status || 'OPEN') === 'OPEN').length;
+    if (fresh.length > 1) {
+      const intro = [
+        isNew ? `🆕 <b>${fresh.length} predicciones nuevas en Forg1</b>` : `🎯 <b>${fresh.length} predicciones activas en Forg1</b>`,
+        '',
+        openCount > 0
+          ? `👉 Hay <b>${openCount}</b> abierta${openCount === 1 ? '' : 's'} para apostar. Jugá <b>todas</b> las que puedas: cada una suma puntos por separado.`
+          : `🔒 Las ${fresh.length} ya cerraron. Esperando resultado — cuando se abra otra, te aviso.`
+      ].join('\n');
+      const introRes = await telegram.sendMessage(intro);
+      if (!introRes.ok) console.error('[Main] Telegram intro falló:', introRes.error);
+    }
+
+    // 1) Aviso inmediato (o pick completo si el análisis ya vino)
+    await Promise.all(work.map(async (pred) => {
+      const sig = predictionSignature(pred);
+      console.log('[Main] Notificando Telegram:', { isNew, predType: pred.predType, question: pred?.question, sig });
+      if (pred.analysis && !notifiedFull.has(sig)) {
+        const sent = await telegram.sendMessage(buildPredictionMessage(pred, pred.analysis, isNew));
+        if (sent.ok) {
+          notifiedPredictions.add(sig);
+          notifiedFull.add(sig);
+        } else {
+          console.error('[Main] Telegram envío falló:', sent.error);
+        }
+        return;
+      }
+      if (notifiedPredictions.has(sig)) return;
+      const quick = await telegram.sendMessage(buildQuickPredictionMessage(pred, isNew));
+      if (quick.ok) notifiedPredictions.add(sig);
+      else console.error('[Main] Telegram aviso rápido falló:', quick.error);
+    }));
+
+    // 2) Análisis y pick — no bloquea el aviso inicial
+    for (const pred of work) {
+      const sig = predictionSignature(pred);
+      if (notifiedFull.has(sig) || !notifiedPredictions.has(sig)) continue;
+      let analysis = pred.analysis || null;
+      if (!analysis) {
+        try {
+          analysis = await withTimeout(analyzePrediction(pred), 40000, 'análisis Telegram timeout');
+        } catch (e) {
+          console.error('[Main] Error analizando para aviso:', e.message);
+        }
+      }
+      if (!analysis) continue;
+      const full = await telegram.sendMessage(buildPredictionMessage(pred, analysis, isNew));
+      if (full.ok) notifiedFull.add(sig);
+      else console.error('[Main] Telegram análisis falló:', full.error);
+    }
+  } finally {
+    for (const pred of work) notifyingPredictions.delete(predictionSignature(pred));
+  }
+}
+
+async function notifyTelegramForPrediction(pred, isNew) {
+  await notifyTelegramBatch([pred], isNew);
 }
 
 // Pasada de monitoreo: scrapea, detecta predicciones nuevas y notifica.
+// Si una pasada tarda más que el intervalo (análisis HLTV + Telegram), no se
+// arranca otra encima: se pisarían knownPredictions y se duplicarían avisos.
+let predScanInFlight = false;
 async function runPredictionScan() {
+  if (predScanInFlight) {
+    console.log('[Main] Pasada anterior todavía en curso, salteo esta');
+    return;
+  }
+  predScanInFlight = true;
+  try {
+    await runPredictionScanInner();
+  } catch (e) {
+    console.error('[Main] Error en pasada de monitoreo:', e.message);
+  } finally {
+    predScanInFlight = false;
+  }
+}
+
+async function runPredictionScanInner() {
   let data;
   try {
     data = await scrapeForg1Predictions();
@@ -671,10 +914,19 @@ async function runPredictionScan() {
   // Mapa actual: sig -> pred
   const currentMap = new Map(preds.map(p => [predictionSignature(p), p]));
 
+  // Registrar predicciones en seriesTracker
+  for (const p of preds) {
+    seriesTracker.upsertPrediction(p);
+  }
+  seriesTracker.removeExpiredSeries();
+
   // Cerradas = estaban antes y ahora desaparecieron
   for (const [sig, oldPred] of knownPredictions) {
     if (!currentMap.has(sig)) {
       console.log('[Main] Predicción cerrada:', sig);
+      const oldPredId = oldPred.id || sig;
+      const updatedSeries = seriesTracker.markPredictionClosed(oldPredId);
+
       if (telegram.isConfigured() && telegram.loadConfig().enabled) {
         // Usar los datos de la predicción original (antes del cierre)
         const q = oldPred.question || 'Predicción';
@@ -701,9 +953,19 @@ async function runPredictionScan() {
           msg += `\n\nResultado aún no disponible.`;
         }
 
-        await telegram.sendMessage(msg);
+        if (updatedSeries) {
+          if (updatedSeries.status === SERIES_STATUS.FINISHED) {
+            msg += `\n\n🏁 <b>Serie finalizada: ${escTg(updatedSeries.team1.name)} ${updatedSeries.seriesScore.team1} - ${updatedSeries.seriesScore.team2} ${escTg(updatedSeries.team2.name)}</b>`;
+          } else {
+            msg += `\n\n🎮 <b>Serie activa:</b> ${escTg(updatedSeries.team1.name)} ${updatedSeries.seriesScore.team1} - ${updatedSeries.seriesScore.team2} ${escTg(updatedSeries.team2.name)}${updatedSeries.format && updatedSeries.format !== 'UNKNOWN' ? ` (${updatedSeries.format})` : ''}\n⏳ Esperando siguiente mapa...`;
+          }
+        }
+
+        const closedRes = await telegram.sendMessage(msg);
+        if (!closedRes.ok) console.error('[Main] Telegram aviso de cierre falló:', closedRes.error);
       }
       notifiedPredictions.delete(sig);
+      notifiedFull.delete(sig);
       recentlyClosed.set(sig, Date.now());
     }
   }
@@ -715,6 +977,7 @@ async function runPredictionScan() {
   }
 
   // Nuevas = están ahora pero no estaban en el ciclo anterior y no en cooldown
+  // IMPORTANTE: Solo predicciones con status OPEN califican como nuevas oportunidades para apostar
   const fresh = preds.filter(p => {
     const sig = predictionSignature(p);
     if (knownPredictions.has(sig)) return false;
@@ -722,15 +985,22 @@ async function runPredictionScan() {
       console.log('[Main] Predicción en cooldown de cierre, ignorando:', sig);
       return false;
     }
+    const status = p.status || 'OPEN';
+    if (status !== 'OPEN') {
+      console.log(`[Main] Predicción no apostable detectada (${status}), omitiendo alerta de apuesta:`, sig);
+      return false;
+    }
     return true;
   });
-  console.log('[Main] Predicciones nuevas:', fresh.length);
+  console.log('[Main] Predicciones nuevas (OPEN):', fresh.length);
 
-  for (const p of fresh) {
-    const teamsTxt = (p.teams || []).map(t => t.name).join(' vs ');
-    console.log('[Main] Nueva predicción detectada:', teamsTxt);
-    showNotification('🎯 Nueva predicción CS2', teamsTxt ? `${p.question || 'Predicción'} — ${teamsTxt}` : (p.question || 'Predicción abierta en Forg1'));
-    await notifyTelegramForPrediction(p, true);
+  if (fresh.length) {
+    const titles = fresh.map(p => p.question || p.title).filter(Boolean).join(' · ');
+    showNotification(
+      fresh.length === 1 ? '🎯 Nueva predicción CS2' : `🎯 ${fresh.length} predicciones CS2`,
+      titles || 'Predicciones abiertas en Forg1'
+    );
+    await notifyTelegramBatch(fresh, true);
   }
 
   // Guardar mapa completo (sig -> pred) para próximo ciclo
@@ -758,18 +1028,25 @@ ipcMain.handle('start-predictions-monitoring', async (event, config = {}) => {
     if (!data.loggedIn) {
       return { success: false, error: 'not-logged-in' };
     }
-    knownPredictions = new Map((data.predictions || []).map(p => [predictionSignature(p), p]));
+    knownPredictions = new Map((data.predictions || []).map(p => {
+      seriesTracker.upsertPrediction(p);
+      return [predictionSignature(p), p];
+    }));
     if (mainWindow) {
       mainWindow.webContents.send('predictions-update', {
         ok: true, loggedIn: true, predictions: data.predictions || [], hasNew: false, newCount: 0
       });
     }
 
-    // Notificar por Telegram las predicciones que YA están abiertas al iniciar
     if (telegram.isConfigured() && telegram.loadConfig().enabled) {
-      for (const p of (data.predictions || [])) {
-        await notifyTelegramForPrediction(p, false); // false = "en curso", no "nueva"
-      }
+      telegram.sendMessage(
+        '📡 <b>Monitoreo activo</b>\nTe aviso acá apenas se abra una predicción en Forg1.'
+      ).then((r) => {
+        if (!r.ok) console.error('[Main] Telegram aviso de monitoreo falló:', r.error);
+      }).catch((e) => console.error('[Main] Telegram aviso de monitoreo falló:', e.message));
+      notifyTelegramBatch(data.predictions || [], false).catch((e) => {
+        console.error('[Main] Telegram en primera pasada falló:', e.message);
+      });
     }
   } catch (e) {
     console.error('Error en primera pasada de predicciones:', e.message);
@@ -788,6 +1065,8 @@ ipcMain.handle('stop-predictions-monitoring', async () => {
   isPredMonitoring = false;
   knownPredictions = new Map();
   notifiedPredictions = new Set();
+  notifiedFull = new Set();
+  notifyingPredictions = new Set();
   recentlyClosed = new Map();
   return { success: true };
 });
@@ -806,7 +1085,8 @@ ipcMain.handle('telegram-get-config', () => {
     chatId: c.chatId,
     enabled: c.enabled,
     configured: telegram.isConfigured(),
-    botUsername: telegram.BOT_USERNAME
+    botUsername: telegram.BOT_USERNAME,
+    lastError: telegram.getLastError()
   };
 });
 
@@ -833,8 +1113,24 @@ ipcMain.handle('telegram-unlink', () => {
 
 ipcMain.handle('telegram-test', async () => {
   return await telegram.sendMessage(
-    '✅ <b>pointStream</b> conectado a Telegram.\nVas a recibir acá las predicciones de Forg1 con su estadística y recomendación.'
+    '✅ <b>pointStream</b> conectado a Telegram.\nVas a recibir acá cada predicción de Forg1 (pueden ser varias a la vez) con stats y recomendación.\n👉 Si hay más de una abierta, apostá en todas las que puedas.'
   );
+});
+
+// ============================================================
+// Configuración Local y Streamers (Fase 7 — ISSUE-005)
+// ============================================================
+
+ipcMain.handle('config-get', async () => {
+  return configStore.loadConfig();
+});
+
+ipcMain.handle('config-save', async (event, data) => {
+  return configStore.saveConfig(data);
+});
+
+ipcMain.handle('config-reset', async () => {
+  return configStore.resetConfig();
 });
 
 // Analiza automáticamente: scrapea forg1 + busca stats en HLTV
@@ -851,28 +1147,24 @@ ipcMain.handle('auto-analyze-predictions', async () => {
       return { success: true, data: { predictions: [], message: 'No hay predicciones abiertas', raw: forg1Data.raw } };
     }
 
-    // 2. Analizar cada predicción con HLTV
+    notifyTelegramBatch(forg1Data.predictions, false).catch((e) => {
+      console.error('[Main] Telegram aviso rápido en escaneo falló:', e.message);
+    });
+
     const analyzed = [];
     for (const pred of forg1Data.predictions) {
-      if (pred.teams.length >= 2) {
-        const team1Name = pred.teams[0].name;
-        const team2Name = pred.teams[1].name;
-        
-        try {
-          const analysis = await analyzeMatchup(team1Name, team2Name);
-          analyzed.push({
-            ...pred,
-            analysis
-          });
-        } catch (err) {
-          analyzed.push({
-            ...pred,
-            analysis: null,
-            error: err.message
-          });
-        }
+      seriesTracker.upsertPrediction(pred);
+      try {
+        const analysis = await withTimeout(analyzePrediction(pred), 40000, 'análisis timeout');
+        analyzed.push({ ...pred, analysis });
+      } catch (err) {
+        analyzed.push({ ...pred, analysis: null, error: err.message });
       }
     }
+
+    notifyTelegramBatch(analyzed, false).catch((e) => {
+      console.error('[Main] Telegram en escaneo falló:', e.message);
+    });
 
     return { success: true, data: { predictions: analyzed } };
   } catch (error) {
@@ -889,3 +1181,8 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled Rejection:', error);
 });
+
+module.exports = {
+  predictionSignature,
+  seriesTracker
+};
