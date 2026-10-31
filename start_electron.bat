@@ -1,4 +1,6 @@
 @echo off
+REM UTF-8 en la consola: sin esto los logs muestran "an├ílisis" en vez de "análisis".
+chcp 65001 >nul
 title pointStream
 color 0A
 cls

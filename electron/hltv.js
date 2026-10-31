@@ -6,6 +6,7 @@ const {
   nickKey,
   splitPlayerTeamHint
 } = require('./player-kills');
+const { resolveAlias } = require('./player-aliases');
 
 // Aliases: nombre en forg1 -> nombre/búsqueda en HLTV
 const TEAM_ALIASES = {
@@ -819,9 +820,14 @@ async function scrapePlayerMatchMaps(resolved) {
 
 async function getPlayerKillStats(playerName, teamHints = []) {
   const parsed = splitPlayerTeamHint(playerName);
-  const query = parsed.player || playerName;
+  // Sobrenombre del stream ("HUEVO") -> nick real en HLTV ("buda") + su equipo.
+  const alias = resolveAlias(parsed.player || playerName);
+  const query = alias ? alias.player : (parsed.player || playerName);
   const hints = [...(teamHints || [])];
   if (parsed.team) hints.push(parsed.team);
+  if (alias && alias.team) hints.unshift(alias.team);
+  if (alias) console.log(`[HLTV] Sobrenombre "${alias.alias}" -> ${alias.player}${alias.team ? ' (' + alias.team + ')' : ''}`);
+  const label = (resolvedName) => alias ? `${alias.alias} (${resolvedName || alias.player})` : (resolvedName || playerName);
 
   const candidates = await searchPlayerCandidates(query);
   const picked = pickPlayerFromSearch(candidates, query, hints);
@@ -837,7 +843,7 @@ async function getPlayerKillStats(playerName, teamHints = []) {
   exact.forEach(pushUnique);
 
   if (!ordered.length) {
-    return { found: false, playerName: query, source: 'hltv', maps: [] };
+    return { found: false, playerName: label(alias ? null : query), source: 'hltv', maps: [] };
   }
 
   for (const resolved of ordered.slice(0, 3)) {
@@ -846,7 +852,7 @@ async function getPlayerKillStats(playerName, teamHints = []) {
     if (maps.length) {
       return {
         found: true,
-        playerName: resolved.name || playerName,
+        playerName: label(resolved.name),
         source: 'hltv',
         playerId: resolved.id,
         slug: resolved.slug,
@@ -858,7 +864,7 @@ async function getPlayerKillStats(playerName, teamHints = []) {
 
   return {
     found: false,
-    playerName: picked?.name || playerName,
+    playerName: label(picked?.name),
     source: 'hltv',
     maps: []
   };

@@ -227,6 +227,13 @@ async function ensureStandings() {
   return null;
 }
 
+// Roster oficial de un equipo según Valve (para buscar sus mapas en HLTV).
+async function getRoster(teamName) {
+  const state = await ensureStandings();
+  const entry = state ? findTeam(state.teams, teamName) : null;
+  return entry ? { name: entry.name, rank: entry.rank, roster: entry.roster.slice() } : null;
+}
+
 async function getMatches(state, entry) {
   if (!entry) return [];
   const cached = state.details[entry.details];
@@ -285,6 +292,7 @@ async function getMatchupData(team1Name, team2Name) {
 
 module.exports = {
   getMatchupData,
+  getRoster,
   normKey,
   parseStandings,
   parseDetails,

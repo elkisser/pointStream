@@ -532,6 +532,14 @@ function pickCopy(a, predType) {
       hint: 'Promedio de kills recientes, no es un lock'
     };
   }
+  if (predType === 'ot-count') {
+    return {
+      kicker: rec ? 'Más probable' : 'Sin pick',
+      title: rec ? (/^no$/i.test(rec) ? 'Sin OT' : rec + (/^\d$/.test(rec) ? ' OT' : '')) : 'Sin datos',
+      meta: a?.mapsSampled ? `${a.mapsSampled} mapas recientes${a.mapName ? ' en ' + a.mapName : ''} de estos equipos` : '',
+      hint: 'Según los marcadores reales de sus últimos mapas'
+    };
+  }
   if (predType === 'kills-range') {
     return {
       kicker: rec ? 'Rango más probable' : 'Sin pick',
@@ -631,6 +639,10 @@ function renderPickHero(a, predType, options = []) {
     const side = a.team1 && sameLabel(a.recommendation, a.team1.name) ? a.team1
       : (a.team2 && sameLabel(a.recommendation, a.team2.name) ? a.team2 : null);
     value = valueLine(side?.probability ?? a.confidence, opt?.percentage);
+  }
+  if (predType === 'ot-count' && a.recommendation && (lvl === 'green' || lvl === 'yellow')) {
+    const opt = options.find(o => sameLabel(o.name || o.label, a.recommendation));
+    value = valueLine(a.confidence, opt?.percentage);
   }
 
   return renderPickTicket({
@@ -742,6 +754,15 @@ function renderOneCard(pred, i) {
         hint: 'No hay promedio del jugador todavía. Guiate por el % de la comunidad.', initials: 'K'
       });
     }
+  } else if (predType === 'ot-count') {
+    if (a && a.kind === 'ot' && a.recommendation) {
+      html += renderPickHero(a, predType, options);
+    } else {
+      html += renderPickTicket({
+        level: 'gray', kicker: '¿Hay OT?', title: 'Sin marcadores',
+        hint: (a && a.verdict) || 'Todavía no se buscaron stats. Tocá "Escanear Forg1" para analizarla.'
+      });
+    }
   } else if (predType === 'yes-no') {
     html += renderPickTicket({
       level: 'gray', kicker: 'Sí / No', title: 'Sin modelo de stats',
@@ -779,14 +800,17 @@ function renderOneCard(pred, i) {
       html += `</div></div>`;
     }
     html += `</div>`;
-  } else if (predType === 'kills-range' || predType === 'kills-duel' || options.length > 2) {
+  } else if (predType === 'kills-range' || predType === 'kills-duel' || predType === 'ot-count' || options.length > 2) {
     html += `<div class="pred-options-list">`;
     const duelPlayers = (a && a.kind === 'kills-duel' && a.players) ? a.players : [];
+    const otProbs = (a && a.kind === 'ot' && a.optionProbs) ? a.optionProbs : [];
     for (const opt of options) {
       const pctNum = parseInt(opt.percentage) || 0;
-      const rec = a && a.recommendation && a.recommendation === opt.name && (a.kind === 'kills' || a.kind === 'kills-duel');
+      const rec = a && a.recommendation && a.recommendation === opt.name && (a.kind === 'kills' || a.kind === 'kills-duel' || a.kind === 'ot');
       const duel = duelPlayers.find(p => p.name === opt.name);
-      const extra = duel && duel.avgKills != null ? ` · ${duel.avgKills} k/mapa` : '';
+      const ot = otProbs.find(p => p.label === opt.name);
+      const extra = duel && duel.avgKills != null ? ` · ${duel.avgKills} k/mapa`
+        : (ot ? ` · stats ${ot.probability}%` : '');
       html += `<div class="pred-option-row${rec ? ' rec' : ''}">
         <span class="pred-option-name">${esc(opt.name)}${rec ? ' · pick' : ''}${extra}</span>
         <div class="pred-option-bar-wrap">
@@ -814,6 +838,13 @@ function renderOneCard(pred, i) {
       { label: 'Stats', l: hasData ? s1 : null, r: hasData ? s2 : null },
       { label: 'Comunidad', l: pctNumber(options[0]?.percentage), r: pctNumber(options[1]?.percentage) }
     ], pickSide);
+  }
+
+  if (predType === 'ot-count' && a && a.kind === 'ot' && a.factors && a.factors.length) {
+    html += `<div class="pred-section">
+      <div class="pred-section-title">Overtimes recientes (HLTV)</div>
+      <div class="pred-factors">${a.factors.map(f => `<div class="pred-factor">${esc(f)}</div>`).join('')}</div>
+    </div>`;
   }
 
   if (predType === 'kills-duel' && a && a.kind === 'kills-duel' && a.dataQuality && a.dataQuality !== 'none') {

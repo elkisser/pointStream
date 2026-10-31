@@ -173,7 +173,8 @@ test('Caso F — Mercado con exactamente 2 opciones (no asumir 3)', () => {
 
   const preds = parsePredictionFromState(state);
   assert.equal(preds[0].markets[0].selections.length, 2);
-  assert.equal(preds[0].markets[0].type, 'yes-no');
+  // "¿Habrá overtime?" Sí/No ahora se analiza con los marcadores reales (ot-count).
+  assert.equal(preds[0].markets[0].type, 'ot-count');
 });
 
 test('Caso G — Mercado con exactamente 3 elecciones', () => {

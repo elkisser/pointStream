@@ -387,8 +387,11 @@ const {
   extractPlayerNameFromQuestion,
   isKillRangeLabel,
   scoreKillPrediction,
-  scoreKillsDuel
+  scoreKillsDuel,
+  canonicalMapName
 } = require('./player-kills');
+const { scoreOtPrediction } = require('./ot-analysis');
+const vrs = require('./vrs');
 const telegram = require('./telegram');
 console.log('[Main] Módulo Telegram cargado. isConfigured:', telegram.isConfigured());
 
@@ -653,6 +656,22 @@ function buildPredictionMessage(pred, a, isNew, extra = {}) {
     lines.push('🔫 <b>Quién mata más</b>');
     lines.push('');
     appendKillsDuelStats(lines, a, status);
+  } else if (predType === 'ot-count') {
+    lines.push('⏱️ <b>¿Hay overtime?</b>');
+    const probs = (a && a.kind === 'ot' && a.optionProbs) || [];
+    lines.push(...opts.map(o => {
+      const p = probs.find(x => x.label === (o.name || o.label));
+      return `  • ${escTg(o.name || o.label)} — comunidad ${escTg(o.percentage || '—')}${p ? ` · stats ${p.probability}%` : ''}`;
+    }));
+    lines.push('');
+    if (a && a.kind === 'ot' && a.recommendation) {
+      const icon = a.verdictLevel === 'green' ? '✅' : a.verdictLevel === 'yellow' ? '⚠️' : 'ℹ️';
+      lines.push(`${icon} <b>${status === 'OPEN' ? 'Apostar a' : 'Más probable'}: ${escTg(a.recommendation)}</b> (${a.confidence}%)`);
+      lines.push(`🧠 ${escTg(a.verdict)}`);
+      if (a.factors && a.factors[0]) lines.push(escTg(a.factors[0]));
+    } else {
+      lines.push(`ℹ️ ${escTg((a && a.verdict) || 'Sin marcadores recientes de estos equipos — guiate por el % de la comunidad.')}`);
+    }
   } else if (predType === 'yes-no') {
     lines.push('🎯 <b>Opciones</b>');
     lines.push(...listOptions(opts));
@@ -725,9 +744,59 @@ function collectPlayerTeamHints(pred) {
   });
 }
 
+// Equipos del partido en curso: la serie actualizada más recientemente o, si no hay,
+// la última predicción de "quién gana".
+function currentMatchTeams() {
+  try {
+    const series = seriesTracker.getActiveSeries()
+      .filter(s => s.team1 && s.team2 && s.team1.name && s.team2.name)
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    if (series.length) return [series[0].team1.name, series[0].team2.name];
+  } catch (e) { /* tracker vacío */ }
+  const matchups = [...knownPredictions.values()]
+    .filter(p => (p.predType === 'team-matchup' || p.predType === 'ot') && (p.options || []).length >= 2);
+  const last = matchups[matchups.length - 1];
+  if (!last) return [];
+  return last.options.map(o => o.name).filter(n => n && !/^ot$/i.test(n)).slice(0, 2);
+}
+
+// Mapas recientes (con marcador) de los dos equipos, vía un jugador de cada roster.
+async function getTeamsRecentMaps(teams) {
+  // Secuencial: HLTV se consulta con una sola ventana (igual que en kills-duel).
+  const perTeam = [];
+  for (const team of teams) {
+    const all = [];
+    let roster = null;
+    try { roster = await vrs.getRoster(team); } catch (e) { /* sin ranking */ }
+    const players = roster ? roster.roster.slice(0, 2) : [];
+    if (!players.length) console.log(`[OT] ${team}: no tengo roster en el ranking de Valve`);
+    for (const player of players) {
+      try {
+        const s = await getPlayerKillStats(player, [roster.name || team]);
+        const withScore = (s.maps || []).filter(m => m.rounds);
+        console.log(`[OT] ${team} vía ${player}: ${withScore.length} mapas con marcador`);
+        if (withScore.length) { all.push(...withScore); break; }
+      } catch (e) {
+        console.warn(`[OT] ${team} vía ${player} falló:`, e.message);
+      }
+    }
+    perTeam.push(...all);
+  }
+  return perTeam;
+}
+
 async function analyzePrediction(pred) {
   const predType = pred.predType || 'team-matchup';
   const teamHints = collectPlayerTeamHints(pred);
+
+  if (predType === 'ot-count') {
+    const teams = currentMatchTeams();
+    if (teams.length < 2) {
+      return scoreOtPrediction(pred.options || [], [], {});
+    }
+    const maps = await getTeamsRecentMaps(teams);
+    return scoreOtPrediction(pred.options || [], maps, { mapName: pred.mapName || null, canonicalMapName, teams });
+  }
 
   if (predType === 'kills-range') {
     const playerName = pred.playerName || extractPlayerNameFromQuestion(pred.question || pred.title);

@@ -189,6 +189,14 @@ function calculateMatchupScoring(norm) {
     result.verdictLevel = 'red';
   }
 
+  // Con datos de un solo equipo el porcentaje sale casi todo del bonus "solo uno
+  // con datos": no alcanza para decir "ventaja sólida". Se baja a "favorito".
+  if (result.dataQuality === 'partial' && result.verdictLevel === 'green') {
+    const missing = found1 ? t2Name : t1Name;
+    result.verdictLevel = 'yellow';
+    result.verdict = `${fav.name.toUpperCase()} FAVORITO — ${missing} no figura en ${srcLabel}, así que el análisis usa datos de un solo equipo. Apostá con cabeza, no todo.`;
+  }
+
   return result;
 }
 

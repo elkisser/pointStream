@@ -1,6 +1,7 @@
 const { BrowserWindow, session } = require('electron');
 const { extractMapAndFormat } = require('./series-tracker');
 const { isKillRangeLabel, extractPlayerNameFromQuestion } = require('./player-kills');
+const { isOtQuestion } = require('./ot-analysis');
 
 // Ventana persistente — se crea una sola vez y se reutiliza entre scans.
 let _win = null;
@@ -25,7 +26,8 @@ function getForg1Window() {
  * 'team-matchup' → dos equipos pro, analizar con HLTV
  * 'kills-range'  → rangos de kills de UN jugador (0-9 / 11 a 13)
  * 'kills-duel'   → quién mata más (opciones = nicks de jugadores)
- * 'ot'           → incluye opción de OT
+ * 'ot'           → incluye opción de OT (equipo A / OT / equipo B)
+ * 'ot-count'     → "¿Hay OT?" con No / 1 / 2 / 3 o Sí / No
  * 'yes-no'       → pregunta de sí/no
  * 'map'          → sobre un mapa
  * 'other'        → otro tipo, mostrar comunidad sin análisis
@@ -39,6 +41,10 @@ function classifyPrediction(question, options) {
   const q = (question || '').toLowerCase();
   const opts = options || [];
   const optNames = opts.map(o => (o.name || o.label || '').toLowerCase().trim());
+
+  // "¿Hay OT?" con No / 1 / 2 / 3 (o Sí / No). Va primero: "3 o más" parece un rango
+  // de kills y "No" parece una pregunta de sí/no.
+  if (isOtQuestion(question, optNames)) return 'ot-count';
 
   // Rangos de kills: "0-9", "10-14", "+20", "1 - 5", "11 a 13", "4 o menos", "17 o mas"
   if (optNames.some(o => isKillRangeLabel(o))) return 'kills-range';

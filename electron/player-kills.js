@@ -41,12 +41,18 @@ function parsePlayerMatchRows(rawRows) {
     const key = `${row.date || ''}|${map || ''}|${kills}-${deaths}|${maps.length}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    // Marcador del mapa: HLTV lo muestra entre paréntesis junto a cada equipo,
+    // "Nemiga (13)" / "FURIA (2)". Solo se toma lo que está antes del mapa.
+    const beforeMap = (mapIdx >= 0 ? rest.slice(0, mapIdx) : rest.slice(0, picked.i)).join(' ');
+    const rs = [...beforeMap.matchAll(/\((\d{1,2})\)/g)].map(x => parseInt(x[1], 10));
+    const rounds = rs.length >= 2 ? { team: rs[0], opponent: rs[1] } : null;
     maps.push({
       kills,
       deaths,
       map,
       opponent: row.opponent || null,
-      date: row.date || null
+      date: row.date || null,
+      rounds
     });
   }
   return maps;
@@ -61,7 +67,7 @@ function parsePlayerMatchesFromText(text) {
   if (!src) return [];
   const mapToken = Object.values(MAP_ALIASES).flat().concat(Object.keys(MAP_ALIASES)).join('|');
   const re = new RegExp(
-    `(\\d{1,2}\\/\\d{1,2}\\/\\d{2,4})[\\s\\S]{0,80}?\\b(${mapToken})\\b[\\s\\S]{0,40}?(\\d{1,2})\\s*[-–]\\s*(\\d{1,2})`,
+    `(\\d{1,2}\\/\\d{1,2}\\/\\d{2,4})([\\s\\S]{0,80}?)\\b(${mapToken})\\b[\\s\\S]{0,40}?(\\d{1,2})\\s*[-–]\\s*(\\d{1,2})`,
     'gi'
   );
   const rows = [];
@@ -69,8 +75,9 @@ function parsePlayerMatchesFromText(text) {
   while ((m = re.exec(src)) && rows.length < 40) {
     rows.push({
       date: m[1],
-      map: m[2],
-      cells: [m[1], m[2], `${m[3]} - ${m[4]}`],
+      map: m[3],
+      // m[2] = "Nemiga (13) FURIA (2)": se conserva para leer el marcador del mapa.
+      cells: [m[1], m[2].trim(), m[3], `${m[4]} - ${m[5]}`],
       opponent: null
     });
   }
