@@ -228,6 +228,24 @@ function teamsFound(norm) {
  *   si ninguna lo logra, se usa la mejor parcial.
  */
 async function analyzeMatchup(team1Name, team2Name, opts = {}) {
+  // "100T" -> "100 Thieves" antes de consultar las fuentes. El resultado vuelve
+  // con los nombres originales para que la card y el pick coincidan con Forg1.
+  const { canonicalTeamName } = require('./team-aliases');
+  const q1 = canonicalTeamName(team1Name);
+  const q2 = canonicalTeamName(team2Name);
+  if (q1 !== team1Name || q2 !== team2Name) {
+    console.log(`[CS2-STATS] Siglas: "${team1Name}" -> "${q1}", "${team2Name}" -> "${q2}"`);
+    const r = await analyzeMatchupResolved(q1, q2, opts);
+    if (r && r.team1 && r.team1.name === q1) r.team1.name = team1Name;
+    if (r && r.team2 && r.team2.name === q2) r.team2.name = team2Name;
+    if (r && r.recommendation === q1) r.recommendation = team1Name;
+    else if (r && r.recommendation === q2) r.recommendation = team2Name;
+    return r;
+  }
+  return analyzeMatchupResolved(team1Name, team2Name, opts);
+}
+
+async function analyzeMatchupResolved(team1Name, team2Name, opts = {}) {
   const hltvProvider = opts.hltvProvider || require('./hltv');
   const bo3Provider = opts.bo3Provider || bo3;
   const vrsProvider = opts.vrsProvider || require('./vrs');

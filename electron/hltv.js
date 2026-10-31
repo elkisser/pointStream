@@ -7,6 +7,7 @@ const {
   splitPlayerTeamHint
 } = require('./player-kills');
 const { resolveAlias } = require('./player-aliases');
+const { canonicalTeamName } = require('./team-aliases');
 
 // Aliases: nombre en forg1 -> nombre/búsqueda en HLTV
 const TEAM_ALIASES = {
@@ -82,7 +83,7 @@ const TEAM_ALIASES = {
 
 function normalizeTeamName(name) {
   const lower = (name || '').toLowerCase().trim();
-  return TEAM_ALIASES[lower] || (name || '').trim();
+  return TEAM_ALIASES[lower] || canonicalTeamName(name);
 }
 
 function normKey(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
