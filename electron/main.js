@@ -748,8 +748,10 @@ function collectPlayerTeamHints(pred) {
 // la última predicción de "quién gana".
 function currentMatchTeams() {
   try {
+    const notATeam = (n) => /^(\d+\+?|no|s[ií]|ot|ninguno)$/i.test(String(n || '').trim());
     const series = seriesTracker.getActiveSeries()
       .filter(s => s.team1 && s.team2 && s.team1.name && s.team2.name)
+      .filter(s => !notATeam(s.team1.name) && !notATeam(s.team2.name))
       .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
     if (series.length) return [series[0].team1.name, series[0].team2.name];
   } catch (e) { /* tracker vacío */ }

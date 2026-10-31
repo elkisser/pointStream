@@ -85,7 +85,21 @@ function resolveAlias(name, extra) {
   if (!k) return null;
   const all = { ...BUILT_IN, ...(extra || loadUserAliases()) };
   const hit = all[k];
-  return hit ? { player: hit.player, team: hit.team || null, alias: String(name).trim() } : null;
+  if (hit) return { player: hit.player, team: hit.team || null, alias: String(name).trim() };
+
+  // "HUEVO Buda", "el HUEVO", "Buda HUEVO": alcanza con que una palabra sea un
+  // sobrenombre conocido o el nick real de uno de ellos.
+  const words = String(name).trim().split(/\s+/).filter(w => key(w).length >= 2);
+  if (words.length > 1) {
+    for (const w of words) {
+      const wk = key(w);
+      const byNick = all[wk];
+      const byReal = Object.values(all).find(v => key(v.player) === wk);
+      const found = byNick || byReal;
+      if (found) return { player: found.player, team: found.team || null, alias: String(name).trim() };
+    }
+  }
+  return null;
 }
 
 module.exports = { resolveAlias, BUILT_IN, sanitize, key };

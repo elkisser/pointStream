@@ -121,7 +121,8 @@ function createSeriesTracker(options = {}) {
    */
   function extractTeams(prediction) {
     if (!prediction) return null;
-    if (prediction.predType === 'kills-range' || prediction.predType === 'kills-duel' || prediction.predType === 'yes-no') {
+    const NON_TEAM_TYPES = ['kills-range', 'kills-duel', 'yes-no', 'ot-count', 'map', 'other'];
+    if (NON_TEAM_TYPES.includes(prediction.predType)) {
       return null;
     }
     const teams = prediction.teams || [];
@@ -131,6 +132,9 @@ function createSeriesTracker(options = {}) {
     const t1Name = (teams[0].name || '').trim();
     const t2Name = (teams[1].name || '').trim();
     if (!t1Name || !t2Name) return null;
+    // Opciones que nunca son equipos ("No", "1", "OT", "Sí"): no inventar una serie con ellas.
+    const notATeam = (n) => /^(\d+\+?|no|s[ií]|ot|ninguno)$/i.test(n);
+    if (notATeam(t1Name) || notATeam(t2Name)) return null;
 
     const norm1 = safeNormalizeTeamName(t1Name);
     const norm2 = safeNormalizeTeamName(t2Name);

@@ -822,14 +822,28 @@ async function getPlayerKillStats(playerName, teamHints = []) {
   const parsed = splitPlayerTeamHint(playerName);
   // Sobrenombre del stream ("HUEVO") -> nick real en HLTV ("buda") + su equipo.
   const alias = resolveAlias(parsed.player || playerName);
-  const query = alias ? alias.player : (parsed.player || playerName);
+  let query = alias ? alias.player : (parsed.player || playerName);
   const hints = [...(teamHints || [])];
   if (parsed.team) hints.push(parsed.team);
   if (alias && alias.team) hints.unshift(alias.team);
   if (alias) console.log(`[HLTV] Sobrenombre "${alias.alias}" -> ${alias.player}${alias.team ? ' (' + alias.team + ')' : ''}`);
   const label = (resolvedName) => alias ? `${alias.alias} (${resolvedName || alias.player})` : (resolvedName || playerName);
 
-  const candidates = await searchPlayerCandidates(query);
+  let candidates = await searchPlayerCandidates(query);
+  // "APODO Nick" sin sobrenombre cargado: probar cada palabra (la última primero,
+  // suele ser el nick real) hasta que HLTV encuentre un jugador.
+  const words = String(query).trim().split(/\s+/).filter(w => w.length >= 3);
+  if (!(candidates || []).length && words.length > 1) {
+    for (const w of words.reverse()) {
+      const c = await searchPlayerCandidates(w);
+      if ((c || []).length) {
+        console.log(`[HLTV] "${query}" no existe; pruebo con "${w}"`);
+        candidates = c;
+        query = w;
+        break;
+      }
+    }
+  }
   const picked = pickPlayerFromSearch(candidates, query, hints);
   const exact = (candidates || []).filter(c =>
     nickKey(c.name) === nickKey(query) || nickKey(c.slug) === nickKey(query)
