@@ -290,11 +290,29 @@ async function searchTeam(teamName) {
 }
 
 /**
- * Resuelve un equipo: primero por ranking (rápido y nos da el rank), si no, búsqueda.
+ * Equipos con ID de HLTV fijo. Se usan cuando el nombre es ambiguo, el equipo
+ * no está en el ranking top, o la búsqueda falla (p.ej. "barca" devuelve el
+ * equipo de fútbol o cualquier otro resultado antes que el equipo de CS2).
+ * Clave: normKey del nombre tal como lo escribe Forg1.
+ */
+const HLTV_TEAM_IDS = {
+  barca: { id: '14107', slug: 'barca', name: 'BARCA' }
+};
+
+/**
+ * Resuelve un equipo: primero por ID fijo, luego por ranking, luego por búsqueda.
  */
 async function resolveTeam(teamName) {
   const normalized = normalizeTeamName(teamName);
   const key = normKey(normalized);
+
+  // 1. ID fijo: nunca falla por ranking ni por búsqueda.
+  if (HLTV_TEAM_IDS[key]) {
+    const pinned = HLTV_TEAM_IDS[key];
+    console.log(`[HLTV] ID fijo: "${teamName}" → ${pinned.id}/${pinned.slug}`);
+    return { id: pinned.id, slug: pinned.slug, rank: null, name: pinned.name };
+  }
+
   const rmap = await getRankingMap();
 
   // Coincidencia exacta primero
