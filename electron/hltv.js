@@ -12,7 +12,9 @@ const { canonicalTeamName } = require('./team-aliases');
 
 // Aliases: nombre en forg1 -> nombre/búsqueda en HLTV
 const TEAM_ALIASES = {
-  'betboom': 'BetBoom',
+  'bestia': 'Bestia',
+  'besitas': 'Bestia',
+  'bestias': 'Bestia',
   'betboom team': 'BetBoom',
   'navi': 'Natus Vincere',
   'na vi': 'Natus Vincere',
@@ -84,7 +86,19 @@ const TEAM_ALIASES = {
 
 function normalizeTeamName(name) {
   const lower = (name || '').toLowerCase().trim();
-  return TEAM_ALIASES[lower] || canonicalTeamName(name);
+  if (TEAM_ALIASES[lower]) return TEAM_ALIASES[lower];
+  const canonical = canonicalTeamName(name);
+  if (canonical !== name) return canonical;
+
+  // Fuzzy: "besitas" → "bestia". Solo para nombres cortos (≤15 chars),
+  // distancia de edición ≤ 2, y el nombre más cercano del mapa de ranking.
+  const nk = normKey(lower);
+  if (nk.length >= 4 && nk.length <= 15) {
+    const { resolveTeamFuzzy } = require('./team-aliases');
+    const hit = resolveTeamFuzzy(nk);
+    if (hit) return hit;
+  }
+  return (name || '').trim();
 }
 
 function normKey(s) { return (s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -140,7 +154,11 @@ function fetchHLTV(url, extractorBody) {
           `);
 
           if (state.challenge) {
-            if (tries > 30) finish(reject, new Error('Cloudflare bloqueó HLTV (usá "Conectar HLTV" una vez)'));
+            if (tries > 30) {
+              // Marcar HLTV como caído antes de rechazar
+              try { require('electron').ipcMain.emit('hltv-cf-blocked'); } catch (e) {}
+              finish(reject, new Error('Cloudflare bloqueó HLTV (usá "Conectar HLTV" una vez)'));
+            }
             return;
           }
           if (state.len < 3000) {

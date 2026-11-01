@@ -101,4 +101,37 @@ function canonicalTeamName(name, extra) {
   return all[k] || raw;
 }
 
-module.exports = { canonicalTeamName, BUILT_IN, key };
+/** Distancia de edición mínima entre dos strings (Levenshtein). */
+function editDistance(a, b) {
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+/**
+ * Dada una clave normalizada ("besitas"), busca el nombre de equipo conocido
+ * más cercano con distancia de edición ≤ 2. Devuelve el nombre canónico o null.
+ * Solo se usa cuando el matching exacto falló, para tipos comunes del stream.
+ */
+function resolveTeamFuzzy(nk) {
+  const all = { ...BUILT_IN };
+  let best = null, bestDist = 3;
+  for (const [aliasKey, canonical] of Object.entries(all)) {
+    const d = editDistance(nk, key(canonical));
+    if (d < bestDist) { best = canonical; bestDist = d; }
+    const dAlias = editDistance(nk, aliasKey);
+    if (dAlias < bestDist) { best = canonical; bestDist = dAlias; }
+  }
+  return best; // null si nada está a distancia ≤ 2
+}
+
+module.exports = { canonicalTeamName, resolveTeamFuzzy, BUILT_IN, key };

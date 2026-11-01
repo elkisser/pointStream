@@ -82,6 +82,20 @@ function initPredictions() {
         hltvActive = !!status.hltvActive;
         updateHltvBtn(false);
       }
+      // Cloudflare bloqueó HLTV: apagar el indicador y mostrar alerta.
+      if (status.cf_blocked) {
+        hltvActive = false;
+        updateHltvBtn(false);
+        // Solo mostrar una vez cada 5 minutos para no spamear.
+        const now = Date.now();
+        if (!window._cfAlertAt || now - window._cfAlertAt > 5 * 60 * 1000) {
+          window._cfAlertAt = now;
+          const msg = '⚠️ HLTV caído por Cloudflare. Tocá "Conectar HLTV" para pasar la verificación de nuevo.';
+          setResults(msgHTML('warn', 'HLTV requiere verificación', msg));
+          const btn = document.getElementById('connectHltvBtn');
+          if (btn) btn.classList.add('needs-action');
+        }
+      }
     });
   }
 

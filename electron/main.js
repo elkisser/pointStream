@@ -312,7 +312,8 @@ ipcMain.handle('start-monitoring', async (event, config) => {
           );
         }
 
-        // Abrir automáticamente solo si no se abrió antes para esta sesión en vivo
+        // Abrir automáticamente solo la primera vez que pasa a live en esta sesión.
+        // No se vuelve a abrir aunque el monitor siga corriendo.
         if (autoOpen && !openedStreamers.has(streamerName)) {
           openInBrave(streamerName, platform);
           openedStreamers.add(streamerName);
@@ -320,10 +321,12 @@ ipcMain.handle('start-monitoring', async (event, config) => {
 
         currentStreamers.set(streamerName, true);
       } else if (!status.isLive && wasLive) {
-        // Stream terminó: liberar para permitir reapertura la próxima vez
+        // Stream terminó.
         console.log(`⭕ ${streamerName} ya no está en vivo`);
         currentStreamers.set(streamerName, false);
-        openedStreamers.delete(streamerName);
+        // NO borramos de openedStreamers: si el streamer vuelve a salir en vivo
+        // en la misma sesión de monitoreo, ya abrimos una pestaña y no queremos
+        // abrir otra. El Set se limpia cuando el usuario detiene el monitor.
       }
     }
   };
@@ -477,6 +480,15 @@ ipcMain.handle('hltv-connect', async () => {
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
+  }
+});
+
+// Cuando fetchHLTV detecta que Cloudflare está bloqueando, apaga el indicador
+// en la UI y avisa para que el usuario pase la verificación de nuevo.
+ipcMain.on('hltv-cf-blocked', () => {
+  console.warn('[Main] Cloudflare bloqueó HLTV: avisando a la UI');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('services-status-update', { hltvActive: false, cf_blocked: true });
   }
 });
 
@@ -811,15 +823,15 @@ async function analyzePrediction(pred) {
     const names = (pred.options || pred.markets?.[0]?.selections || [])
       .map(o => o.name || o.label)
       .filter(n => n && !/^ot$/i.test(n) && !isKillRangeLabel(n) && !/^(sí|si|no)$/i.test(n));
-    const stats = [];
-    for (const name of names) {
+    // Buscar todos los jugadores en paralelo para no tardar el triple.
+    const stats = await Promise.all(names.map(async (name) => {
       try {
         const s = await getPlayerKillStats(name, teamHints);
-        stats.push({ ...s, queryName: name, playerName: s.playerName || name });
+        return { ...s, queryName: name, playerName: s.playerName || name };
       } catch (e) {
-        stats.push({ found: false, playerName: name, queryName: name, maps: [] });
+        return { found: false, playerName: name, queryName: name, maps: [] };
       }
-    }
+    }));
     return scoreKillsDuel(pred.options || [], stats, { mapName: pred.mapName || null });
   }
 
