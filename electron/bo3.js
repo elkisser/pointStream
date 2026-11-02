@@ -46,10 +46,19 @@ const KNOWN_SLUGS = {
   'ef': 'eternal-fire',
   'betboom': 'betboom-team',
   'betboom team': 'betboom-team',
+  'bb': 'betboom-team',
+  'bb team': 'betboom-team',
+  'bb/bb team': 'betboom-team',
   'aurora': 'aurora-gaming',
   'aurora gaming': 'aurora-gaming',
   '9z': '9z',
   '9z team': '9z',
+  '9z globant': '9z',
+  '9z globant x duki': '9z',
+  'legacy': 'legacy-br',
+  'legacy br': 'legacy-br',
+  'bestia': 'bestia',
+  'besitas': 'bestia',
   'pain': 'pain-gaming',
   'pain gaming': 'pain-gaming',
   'mibr': 'mibr',
@@ -62,7 +71,12 @@ const KNOWN_SLUGS = {
 
 function normalizeSlug(rawName) {
   if (!rawName) return '';
-  const clean = String(rawName).trim().toLowerCase();
+  let clean = String(rawName).trim().toLowerCase();
+  try {
+    const { canonicalTeamName } = require('./team-aliases');
+    const canon = canonicalTeamName(rawName);
+    if (canon) clean = canon.trim().toLowerCase();
+  } catch (e) {}
   if (KNOWN_SLUGS[clean]) return KNOWN_SLUGS[clean];
   return clean.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
@@ -179,8 +193,109 @@ async function resolveTeam(teamName) {
     // 404 o no encontrado
   }
 
+  // 3. Fallback: buscar por nombre exacto en endpoint /teams?filter[teams.name][eq]=...
+  try {
+    const byName = await fetchBO3(`/teams?filter[teams.name][eq]=${encodeURIComponent(teamName)}`);
+    if (byName && Array.isArray(byName.results) && byName.results.length > 0) {
+      const found = byName.results[0];
+      const teamObj = {
+        id: found.id,
+        slug: found.slug || slug,
+        name: found.name || teamName,
+        rank: typeof found.rank === 'number' ? found.rank : null
+      };
+      teamCache.set(cacheKey, { team: teamObj, ts: Date.now() });
+      return teamObj;
+    }
+  } catch (e) {}
+
+  // 4. Fallback: buscar por slug en endpoint /teams?filter[teams.slug][eq]=...
+  try {
+    const bySlug = await fetchBO3(`/teams?filter[teams.slug][eq]=${encodeURIComponent(slug)}`);
+    if (bySlug && Array.isArray(bySlug.results) && bySlug.results.length > 0) {
+      const found = bySlug.results[0];
+      const teamObj = {
+        id: found.id,
+        slug: found.slug || slug,
+        name: found.name || teamName,
+        rank: typeof found.rank === 'number' ? found.rank : null
+      };
+      teamCache.set(cacheKey, { team: teamObj, ts: Date.now() });
+      return teamObj;
+    }
+  } catch (e) {}
+
   // No encontrado
   teamCache.set(cacheKey, { team: null, ts: Date.now() });
+  return null;
+}
+
+// Caché de rosters
+const rosterCache = new Map(); // slug/name -> { roster, ts }
+
+/**
+ * Obtiene el roster activo, ratings individuales y refuerzos recientes desde BO3.gg.
+ * ZERO FAKE DATA: Si el equipo o ratings no están disponibles, devuelve null.
+ */
+async function getTeamRoster(teamNameOrSlug) {
+  if (!teamNameOrSlug) return null;
+  const slug = normalizeSlug(teamNameOrSlug);
+  const cacheKey = slug || String(teamNameOrSlug).toLowerCase().trim();
+
+  const cached = rosterCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts < CACHE_TTL_MS)) {
+    return cached.roster;
+  }
+
+  try {
+    const data = await fetchBO3(`/teams/${slug}`);
+    if (data && Array.isArray(data.players) && data.players.length > 0) {
+      const active = data.players.filter(p => !p.is_coach && p.nickname);
+      const withRating = active.filter(p => typeof p.six_month_avg_rating === 'number' && p.six_month_avg_rating > 0);
+
+      const avgRating = withRating.length > 0
+        ? Number((withRating.reduce((sum, p) => sum + p.six_month_avg_rating, 0) / withRating.length).toFixed(2))
+        : null;
+
+      const sorted = [...withRating].sort((a, b) => b.six_month_avg_rating - a.six_month_avg_rating);
+      const starPlayer = sorted[0] ? {
+        nickname: sorted[0].nickname,
+        rating: Number(sorted[0].six_month_avg_rating.toFixed(2))
+      } : null;
+
+      let newPlayer = null;
+      for (const p of active) {
+        const transfers = Array.isArray(p.player_transfers) ? p.player_transfers : [];
+        const recent = transfers.find(t => t.action_date && (t.action_date.startsWith('2026') || t.action_date.startsWith('2025')));
+        if (recent) {
+          newPlayer = {
+            nickname: p.nickname,
+            rating: typeof p.six_month_avg_rating === 'number' ? Number(p.six_month_avg_rating.toFixed(2)) : null,
+            date: recent.action_date
+          };
+          break;
+        }
+      }
+
+      const rosterObj = {
+        playersCount: active.length,
+        avgRating,
+        starPlayer,
+        newPlayer,
+        players: active.map(p => ({
+          nickname: p.nickname,
+          rating: typeof p.six_month_avg_rating === 'number' ? Number(p.six_month_avg_rating.toFixed(2)) : null
+        }))
+      };
+
+      rosterCache.set(cacheKey, { roster: rosterObj, ts: Date.now() });
+      return rosterObj;
+    }
+  } catch (err) {
+    // Silencioso ante fallos
+  }
+
+  rosterCache.set(cacheKey, { roster: null, ts: Date.now() });
   return null;
 }
 
@@ -202,11 +317,17 @@ async function getTeamMatches(teamId) {
       for (const m of data.results) {
         const isWinner = m.winner_team_id === teamId;
         const tournamentName = m.tournament?.name || '';
+        const oppName = m.team1_id === teamId ? (m.team2?.name || '') : (m.team1?.name || '');
+        const myScore = m.team1_id === teamId ? m.team1_score : m.team2_score;
+        const oppScore = m.team1_id === teamId ? m.team2_score : m.team1_score;
+        const scoreStr = (myScore != null && oppScore != null) ? `${myScore}-${oppScore}` : null;
         results.push({
           id: m.id,
           team1Id: m.team1_id,
           team2Id: m.team2_id,
           won: isWinner,
+          opponent: oppName || null,
+          score: scoreStr,
           event: tournamentName,
           startDate: m.start_date
         });
@@ -358,13 +479,18 @@ async function getMatchupData(team1Name, team2Name) {
       });
     }
 
-    const [matches1, matches2] = await Promise.all([
+    const [matches1, matches2, roster1, roster2] = await Promise.all([
       found1 ? getTeamMatches(r1.id) : Promise.resolve([]),
-      found2 ? getTeamMatches(r2.id) : Promise.resolve([])
+      found2 ? getTeamMatches(r2.id) : Promise.resolve([]),
+      found1 ? getTeamRoster(r1.slug || team1Name) : Promise.resolve(null),
+      found2 ? getTeamRoster(r2.slug || team2Name) : Promise.resolve(null)
     ]);
 
     const team1Data = found1 ? buildTeamStats(r1, matches1) : createEmptyTeamStats(team1Name);
     const team2Data = found2 ? buildTeamStats(r2, matches2) : createEmptyTeamStats(team2Name);
+
+    if (roster1) team1Data.roster = roster1;
+    if (roster2) team2Data.roster = roster2;
 
     const h2h = (found1 && found2) ? computeH2H(matches1, r1.id, r2.id) : { total: 0, team1Wins: 0, team2Wins: 0 };
     const sharedEvent = (found1 && found2) ? detectSharedEvent(matches1, matches2) : null;
@@ -385,7 +511,9 @@ async function getMatchupData(team1Name, team2Name) {
       team1: team1Data,
       team2: team2Data,
       h2h,
-      sharedEvent
+      sharedEvent,
+      recentMatches1: matches1.slice(0, 10),
+      recentMatches2: matches2.slice(0, 10)
     });
   } catch (err) {
     console.error(`[BO3] Error crítico en getMatchupData:`, err.message);
@@ -401,6 +529,7 @@ async function getMatchupData(team1Name, team2Name) {
 module.exports = {
   resolveTeam,
   getTeamMatches,
+  getTeamRoster,
   getMatchupData,
   normalizeSlug,
   fetchBO3

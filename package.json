@@ -1,6 +1,6 @@
 {
   "name": "pointstream",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Monitor de streams de Kick.com y predicciones de CS2 (Forg1 + HLTV) con notificaciones de escritorio",
   "main": "electron/main.js",
   "scripts": {

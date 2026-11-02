@@ -374,15 +374,30 @@ async function doManual() {
   setBusy(true);
   setResults(loadingHTML(`Analizando ${t1} vs ${t2}`, 'Buscando en HLTV… puede tardar unos segundos.'));
 
+  const mapVal = document.getElementById('manualMapSelect')?.value;
+  const scoreVal = document.getElementById('manualSeriesScore')?.value;
+  const pickVal = document.getElementById('manualPickSelect')?.value;
+
+  const manualOpts = {};
+  if (mapVal) manualOpts.mapNumber = parseInt(mapVal, 10);
+  if (scoreVal) {
+    const parts = scoreVal.split('-').map(Number);
+    manualOpts.seriesScore = { team1: parts[0], team2: parts[1] };
+  }
+  if (pickVal === 'team1') manualOpts.mapPick = t1;
+  else if (pickVal === 'team2') manualOpts.mapPick = t2;
+
   try {
-    const res = await window.predictionsAPI.analyzeMatch(t1, t2);
+    const res = await window.predictionsAPI.analyzeMatch(t1, t2, manualOpts);
     if (res.success) {
       if (res.data && res.data.dataQuality && res.data.dataQuality !== 'none') {
         hltvActive = true;
         updateHltvBtn(false);
       }
       renderCards([{
-        question: `${t1} vs ${t2}`,
+        question: `${t1} vs ${t2}${mapVal ? ` · Mapa ${mapVal}` : ''}`,
+        mapNumber: mapVal ? parseInt(mapVal, 10) : null,
+        seriesScore: manualOpts.seriesScore || null,
         teams: [{ name: res.data.team1.name, percentage: '—' }, { name: res.data.team2.name, percentage: '—' }],
         analysis: res.data
       }]);
@@ -896,6 +911,53 @@ function renderOneCard(pred, i) {
         <div class="pred-factors">${a.factors.map(f => `<div class="pred-factor">${esc(f)}</div>`).join('')}</div>
       </div>`;
     }
+
+    // Últimos 5 partidos por equipo
+    const fmtForm = (matches, teamName) => {
+      if (!Array.isArray(matches) || !matches.length) return '';
+      const rows = matches.slice(0, 5).map(m => {
+        const cls = m.won ? 'win' : 'loss';
+        const icon = m.won ? '✅' : '❌';
+        const score = m.score ? `<span class="form-score">${esc(m.score)}</span>` : '';
+        const opp = m.opponent ? `<span class="form-opp">vs ${esc(m.opponent)}</span>`
+          : (m.event ? `<span class="form-opp">${esc(m.event)}</span>` : '');
+        return `<div class="form-row ${cls}">${icon}${score}${opp}</div>`;
+      }).join('');
+      return `<div class="form-team"><div class="form-team-name">${esc(teamName)}</div>${rows}</div>`;
+    };
+    const f1 = fmtForm(a.recentMatches1, a.team1?.name || options[0]?.name || '');
+    const f2 = fmtForm(a.recentMatches2, a.team2?.name || options[1]?.name || '');
+    if (f1 || f2) {
+      html += `<div class="pred-section">
+        <div class="pred-section-title">Últimos 5 partidos</div>
+        <div class="pred-form">${f1}${f2}</div>
+      </div>`;
+    }
+
+    // Roster & Jugadores clave
+    const ros1 = a.roster1 || a.team1?.data?.roster;
+    const ros2 = a.roster2 || a.team2?.data?.roster;
+    if (ros1 || ros2) {
+      const renderRosterCol = (teamName, ros) => {
+        if (!ros) return `<div class="roster-col"><div class="form-team-name">${esc(teamName)}</div><div style="font-size:0.75rem;color:var(--text-tertiary);">Sin datos de roster</div></div>`;
+        const avgBadge = ros.avgRating ? `<span class="badge-rating" title="Rating promedio activo">⭐ ${ros.avgRating} avg</span>` : '';
+        const star = ros.starPlayer ? `<div class="roster-highlight">⭐ <strong>${esc(ros.starPlayer.nickname)}</strong> (${ros.starPlayer.rating} rating)</div>` : '';
+        const newP = ros.newPlayer ? `<div class="roster-highlight new">🔥 <strong>${esc(ros.newPlayer.nickname)}</strong> ${ros.newPlayer.rating ? `(${ros.newPlayer.rating} rating)` : ''} · Refuerzo</div>` : '';
+        const pList = (ros.players || []).map(p => `<span class="roster-tag">${esc(p.nickname)}${p.rating ? ` <em>${p.rating}</em>` : ''}</span>`).join('');
+        return `<div class="roster-col">
+          <div class="roster-header">
+            <strong>${esc(teamName)}</strong>
+            ${avgBadge}
+          </div>
+          ${newP || star}
+          <div class="roster-tags">${pList}</div>
+        </div>`;
+      };
+      html += `<div class="pred-section">
+        <div class="pred-section-title">Roster & Nivel Individual (BO3.gg)</div>
+        <div class="pred-roster-grid">${renderRosterCol(t1Name, ros1)}${renderRosterCol(t2Name, ros2)}</div>
+      </div>`;
+    }
   }
 
   html += `</div>`;
@@ -916,6 +978,11 @@ function buildStatsRows(a) {
   if (w1 != null || w2 != null) {
     rows += statRow('Winrate reciente', w1 != null ? w1 + '%' : '—', w2 != null ? w2 + '%' : '—',
       (w1 != null && w2 != null) ? (w1 > w2 ? 'l' : 'r') : '');
+  }
+
+  if (a.roster1?.avgRating && a.roster2?.avgRating) {
+    rows += statRow('Rating Roster', a.roster1.avgRating, a.roster2.avgRating,
+      a.roster1.avgRating > a.roster2.avgRating ? 'l' : (a.roster2.avgRating > a.roster1.avgRating ? 'r' : ''));
   }
 
   if (d1 && d2 && (d1.wins + d1.losses > 0 || d2.wins + d2.losses > 0)) {

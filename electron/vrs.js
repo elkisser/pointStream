@@ -33,11 +33,21 @@ const ALIASES = {
   mongolz: 'themongolz',
   mousesports: 'mouz',
   col: 'complexity',
-  eg: 'evilgeniuses'
+  eg: 'evilgeniuses',
+  bb: 'betboom',
+  bbteam: 'betboom',
+  betboomteam: 'betboom',
+  '9zglobant': '9z',
+  '9zglobantxduki': '9z'
 };
 
 function normKey(name) {
-  let k = String(name || '')
+  let canon = name;
+  try {
+    const { canonicalTeamName } = require('./team-aliases');
+    canon = canonicalTeamName(name) || name;
+  } catch (e) {}
+  let k = String(canon || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
@@ -144,7 +154,11 @@ function buildTeamStats(teamName, entry, matches) {
     vrsPoints: entry.points,
     wins,
     losses,
-    winrate: recent.length > 0 ? Math.round((wins / recent.length) * 100) : null
+    winrate: recent.length > 0 ? Math.round((wins / recent.length) * 100) : null,
+    roster: entry.roster && entry.roster.length ? {
+      players: entry.roster.map(p => ({ nickname: p })),
+      source: 'vrs'
+    } : null
   };
 }
 
@@ -282,7 +296,9 @@ async function getMatchupData(team1Name, team2Name) {
       team2Name,
       team1: buildTeamStats(team1Name, e1, m1),
       team2: buildTeamStats(team2Name, e2, m2),
-      h2h
+      h2h,
+      recentMatches1: m1.slice(0, 5),
+      recentMatches2: m2.slice(0, 5)
     });
   } catch (err) {
     console.error('[VRS] Error en getMatchupData:', err.message);

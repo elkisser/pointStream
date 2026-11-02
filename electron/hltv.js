@@ -205,6 +205,11 @@ let rankingCache = null, rankingTs = 0;
 const searchCache = new Map(); // key -> { result, ts }
 const resultsCache = new Map();
 
+/** Devuelve el ranking cacheado en memoria sin hacer fetch (puede ser null si no cargó aún). */
+function getRankingMapSync() {
+  return rankingCache || null;
+}
+
 /**
  * Ranking mundial (cacheado). Devuelve un mapa normKey -> {id, slug, rank, name}.
  * Resolver el equipo desde acá evita la búsqueda (más rápido y confiable) y de
@@ -353,13 +358,26 @@ async function getTeamResults(teamId, teamName) {
         const teams = con.querySelectorAll('.team');
         const scoreEl = con.querySelector('.result-score');
         const evEl = con.querySelector('.event-name') || con.querySelector('.event');
+        // Fecha: HLTV expone data-unix en el contenedor padre de cada día,
+        // o en un elemento .date dentro del .result-con en algunas versiones del DOM.
+        const dateEl = con.querySelector('[data-unix]') || con.closest('[data-unix]');
+        const dateUnix = dateEl ? parseInt(dateEl.getAttribute('data-unix'), 10) : null;
+        // Formato de serie (BO1/BO3/BO5) y href del partido
+        const linkEl = con.querySelector('a[href*="/matches/"]') || con.closest('a[href*="/matches/"]');
+        const href = linkEl ? linkEl.getAttribute('href') : null;
+        const matchId = href ? (href.match(/\\/matches\\/(\\d+)\\//) || [])[1] : null;
+        const formatEl = con.querySelector('.bestof, .map-count, .map-status');
         if (teams.length >= 2 && scoreEl) {
           const sm = (scoreEl.textContent || '').match(/(\\d+)\\D+(\\d+)/);
           if (sm) out.push({
             t1: teams[0].textContent.trim(),
             t2: teams[1].textContent.trim(),
             s1: parseInt(sm[1]), s2: parseInt(sm[2]),
-            event: evEl ? evEl.textContent.trim() : ''
+            event: evEl ? evEl.textContent.trim() : '',
+            dateUnix: Number.isFinite(dateUnix) ? dateUnix : null,
+            format: formatEl ? (formatEl.textContent || '').trim() : null,
+            matchId: matchId || null,
+            href: href || null
           });
         }
       });
@@ -373,11 +391,29 @@ async function getTeamResults(teamId, teamName) {
   const results = [];
   for (const r of (rows || [])) {
     const k1 = normKey(r.t1), k2 = normKey(r.t2);
-    let won = null;
-    if (k1 && (k1 === key || k1.includes(key) || key.includes(k1))) won = r.s1 > r.s2;
-    else if (k2 && (k2 === key || k2.includes(key) || key.includes(k2))) won = r.s2 > r.s1;
-    else continue;
-    results.push({ won, event: r.event });
+    let won = null, opponent = null, opponentKey = null;
+    let score = null;
+    if (k1 && (k1 === key || k1.includes(key) || key.includes(k1))) {
+      won = r.s1 > r.s2;
+      score = `${r.s1}-${r.s2}`;
+      opponent = r.t2;
+      opponentKey = k2;
+    } else if (k2 && (k2 === key || k2.includes(key) || key.includes(k2))) {
+      won = r.s2 > r.s1;
+      score = `${r.s2}-${r.s1}`;
+      opponent = r.t1;
+      opponentKey = k1;
+    } else { continue; }
+    results.push({
+      won,
+      event: r.event,
+      opponent: opponent || null,
+      opponentKey: opponentKey || null,
+      score: score || null,
+      dateUnix: r.dateUnix || null,
+      format: r.format || null,
+      matchId: r.matchId || null
+    });
   }
   resultsCache.set(teamId, { data: results, ts: Date.now() });
   return results;
@@ -705,7 +741,9 @@ async function getMatchupData(team1Name, team2Name) {
       eventFallback: !!d2?.eventFallback
     },
     h2h,
-    sharedEvent: shared ? shared.event : null
+    sharedEvent: shared ? shared.event : null,
+    recentMatches1: res1.slice(0, 10),
+    recentMatches2: res2.slice(0, 10)
   };
 }
 
@@ -713,9 +751,9 @@ async function getMatchupData(team1Name, team2Name) {
  * Delegación principal hacia cs2-stats-service para asegurar que todas
  * las llamadas existentes a analyzeMatchup gocen del fallback robusto.
  */
-async function analyzeMatchup(team1Name, team2Name) {
+async function analyzeMatchup(team1Name, team2Name, opts = {}) {
   const cs2StatsService = require('./cs2-stats-service');
-  return cs2StatsService.analyzeMatchup(team1Name, team2Name, { hltvProvider: { getMatchupData } });
+  return cs2StatsService.analyzeMatchup(team1Name, team2Name, { ...opts, hltvProvider: { getMatchupData } });
 }
 
 /**
@@ -956,6 +994,7 @@ module.exports = {
   openHLTVConnect,
   getH2H,
   parseH2HMatches,
+  getRankingMapSync,
   normKey
 };
 

@@ -23,3 +23,13 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Scratch / temporary
+_run.js
+_run.log
+_git.js
+_preview/
+Cuarentena
+ui/_preview-pick.html
+mcp.json
+

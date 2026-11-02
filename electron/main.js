@@ -398,9 +398,9 @@ const vrs = require('./vrs');
 const telegram = require('./telegram');
 console.log('[Main] Módulo Telegram cargado. isConfigured:', telegram.isConfigured());
 
-ipcMain.handle('analyze-match', async (event, team1, team2) => {
+ipcMain.handle('analyze-match', async (event, team1, team2, opts = {}) => {
   try {
-    const analysis = await analyzeMatchup(team1, team2);
+    const analysis = await analyzeMatchup(team1, team2, opts);
     return { success: true, data: analysis };
   } catch (error) {
     console.error('Error analizando match:', error.message);
@@ -583,6 +583,53 @@ function appendMatchupStats(lines, a, status) {
     lines.push('');
     lines.push(`📊 <b>Estadísticas (${srcName})</b>`);
     lines.push(stat.join('\n'));
+  }
+
+  // Roster y jugadores clave si disponibles
+  const ros1 = a.roster1 || a.team1?.data?.roster;
+  const ros2 = a.roster2 || a.team2?.data?.roster;
+  if (ros1 || ros2) {
+    const rLines = [];
+    if (ros1?.avgRating || ros2?.avgRating) {
+      rLines.push(`• Rating roster: ${ros1?.avgRating ? ros1.avgRating + ' avg' : '—'} vs ${ros2?.avgRating ? ros2.avgRating + ' avg' : '—'}`);
+    }
+    if (ros1?.starPlayer) rLines.push(`• ⭐ Estrella ${escTg(a.team1.name)}: ${escTg(ros1.starPlayer.nickname)} (${ros1.starPlayer.rating})`);
+    if (ros2?.starPlayer) rLines.push(`• ⭐ Estrella ${escTg(a.team2.name)}: ${escTg(ros2.starPlayer.nickname)} (${ros2.starPlayer.rating})`);
+    if (ros1?.newPlayer) rLines.push(`• 🔥 Refuerzo ${escTg(a.team1.name)}: ${escTg(ros1.newPlayer.nickname)} (${ros1.newPlayer.rating ? ros1.newPlayer.rating + ' rating' : 'reciente'})`);
+    if (ros2?.newPlayer) rLines.push(`• 🔥 Refuerzo ${escTg(a.team2.name)}: ${escTg(ros2.newPlayer.nickname)} (${ros2.newPlayer.rating ? ros2.newPlayer.rating + ' rating' : 'reciente'})`);
+    if (rLines.length) {
+      lines.push('');
+      lines.push(`🌟 <b>Nivel Individual & Roster</b>`);
+      lines.push(rLines.join('\n'));
+    }
+  }
+
+  if (a.factors && a.factors.length) {
+    lines.push('');
+    lines.push('💡 <b>Claves del análisis:</b>');
+    lines.push(...a.factors.slice(0, 4).map(f => `  • ${escTg(f)}`));
+  }
+
+  // Últimos 5 partidos si disponibles
+  const fmtRecent = (matches, teamName) => {
+    if (!Array.isArray(matches) || !matches.length) return null;
+    const rows = matches.slice(0, 5).map(m => {
+      const icon = m.won ? '✅' : '❌';
+      const parts = [`${icon}`];
+      if (m.score) parts.push(m.score);
+      if (m.opponent) parts.push(`vs ${escTg(m.opponent)}`);
+      else if (m.event) parts.push(escTg(m.event));
+      return `  ${parts.join(' ')}`;
+    });
+    return `<b>${escTg(teamName)}</b>\n${rows.join('\n')}`;
+  };
+  const r1 = fmtRecent(a.recentMatches1, a.team1?.name || '');
+  const r2 = fmtRecent(a.recentMatches2, a.team2?.name || '');
+  if (r1 || r2) {
+    lines.push('');
+    lines.push('📋 <b>Últimos 5 partidos</b>');
+    if (r1) lines.push(r1);
+    if (r2) lines.push(r2);
   }
 }
 
@@ -840,7 +887,30 @@ async function analyzePrediction(pred) {
       .map(t => t.name)
       .filter(n => n && !/^ot$/i.test(n) && !isKillRangeLabel(n));
     if (names.length < 2) return null;
-    return analyzeMatchup(names[0], names[1]);
+
+    let seriesScore = pred.seriesScore || null;
+    let format = pred.format || 'UNKNOWN';
+    if (pred.seriesId) {
+      const liveSeries = seriesTracker.getSeries(pred.seriesId);
+      if (liveSeries) {
+        if (!seriesScore || (seriesScore.team1 === 0 && seriesScore.team2 === 0)) {
+          seriesScore = liveSeries.seriesScore;
+        }
+        if (format === 'UNKNOWN' && liveSeries.format && liveSeries.format !== 'UNKNOWN') {
+          format = liveSeries.format;
+        }
+      }
+    }
+
+    return analyzeMatchup(names[0], names[1], {
+      mapNumber: pred.mapNumber,
+      mapName: pred.mapName,
+      format,
+      seriesScore,
+      seriesId: pred.seriesId,
+      question: pred.question || pred.title,
+      options: pred.options || pred.teams
+    });
   }
 
   return null;
@@ -1000,6 +1070,26 @@ async function runPredictionScanInner() {
   // Registrar predicciones en seriesTracker
   for (const p of preds) {
     seriesTracker.upsertPrediction(p);
+    if ((p.status === 'RESOLVED' || p.result) && p.seriesId) {
+      const s = seriesTracker.getSeries(p.seriesId);
+      if (s && p.result) {
+        const wKey = normKey(p.result);
+        const k1 = normKey(s.team1.name);
+        const k2 = normKey(s.team2.name);
+        const winner = k1 === wKey ? 'team1' : (k2 === wKey ? 'team2' : null);
+        if (winner) {
+          const mapNum = p.mapNumber || s.currentMapNumber || 1;
+          const existingMap = s.maps.find(m => m.number === mapNum);
+          if (!existingMap || !existingMap.winner) {
+            seriesTracker.updateMapResult(p.seriesId, mapNum, {
+              winner,
+              mapName: p.mapName || null
+            });
+            console.log(`[Main] Resultado registrado en serie ${p.seriesId} mapa ${mapNum}: ${winner} (${p.result})`);
+          }
+        }
+      }
+    }
   }
   seriesTracker.removeExpiredSeries();
 
@@ -1010,28 +1100,46 @@ async function runPredictionScanInner() {
       const oldPredId = oldPred.id || sig;
       const updatedSeries = seriesTracker.markPredictionClosed(oldPredId);
 
+      // Buscar resultado en el DOM actual
+      const recentResults = data.recentResults || [];
+      const result = recentResults[0];
+
+      if (result && result.winner && oldPred.seriesId) {
+        const s = seriesTracker.getSeries(oldPred.seriesId);
+        if (s) {
+          const wKey = normKey(result.winner);
+          const k1 = normKey(s.team1.name);
+          const k2 = normKey(s.team2.name);
+          const winner = k1 === wKey ? 'team1' : (k2 === wKey ? 'team2' : null);
+          if (winner) {
+            const mapNum = oldPred.mapNumber || s.currentMapNumber || 1;
+            const existingMap = s.maps.find(m => m.number === mapNum);
+            if (!existingMap || !existingMap.winner) {
+              seriesTracker.updateMapResult(oldPred.seriesId, mapNum, {
+                winner,
+                mapName: oldPred.mapName || null
+              });
+              console.log(`[Main] Cierre con resultado en serie ${oldPred.seriesId} mapa ${mapNum}: ${winner} (${result.winner}). Score: ${s.seriesScore.team1}-${s.seriesScore.team2}`);
+            }
+          }
+        }
+      }
+
       if (telegram.isConfigured() && telegram.loadConfig().enabled) {
         // Usar los datos de la predicción original (antes del cierre)
         const q = oldPred.question || 'Predicción';
         const teamsTxt = (oldPred.teams || []).map(t => t.name).join(' vs ');
 
-        // Buscar resultado en el DOM actual
-        const recentResults = data.recentResults || [];
-        const result = recentResults[0];
-
         let msg = `🔒 <b>Predicción cerrada</b>`;
         if (q && q !== 'Predicción abierta') msg += `\n❓ <i>${escTg(q)}</i>`;
         if (teamsTxt) msg += `\n⚔️ <b>${escTg(teamsTxt)}</b>`;
 
-        if (result) {
-          msg += `\n`;
-          if (result.won) {
-            msg += `\n🏆 <b>¡GANASTE!</b> — Ganó <b>${escTg(result.winner)}</b>`;
-            if (result.pointsChange) msg += `\n💰 <b>${escTg(result.pointsChange)}</b>`;
-          } else {
-            msg += `\n❌ <b>Perdiste.</b> — Ganó <b>${escTg(result.winner)}</b>`;
-            if (result.pointsChange) msg += `\n💸 ${escTg(result.pointsChange)}`;
-          }
+        if (result && result.winner) {
+          msg += `\n\n🏆 <b>Resultado:</b> Ganó <b>${escTg(result.winner)}</b>`;
+          if (result.pointsChange) msg += ` (${escTg(result.pointsChange)})`;
+        } else if (result) {
+          msg += `\n\n🏁 <b>Predicción cerrada</b>`;
+          if (result.pointsChange) msg += ` (${escTg(result.pointsChange)})`;
         } else {
           msg += `\n\nResultado aún no disponible.`;
         }

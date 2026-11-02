@@ -36,7 +36,7 @@ contextBridge.exposeInMainWorld('windowAPI', {
 
 // API de Predicciones CS2
 contextBridge.exposeInMainWorld('predictionsAPI', {
-  analyzeMatch: (team1, team2) => ipcRenderer.invoke('analyze-match', team1, team2),
+  analyzeMatch: (team1, team2, opts = {}) => ipcRenderer.invoke('analyze-match', team1, team2, opts),
   scrapeForg1: () => ipcRenderer.invoke('scrape-forg1-predictions'),
   autoAnalyze: () => ipcRenderer.invoke('auto-analyze-predictions'),
   openForg1Login: () => ipcRenderer.invoke('forg1-login'),

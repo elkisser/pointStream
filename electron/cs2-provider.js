@@ -28,7 +28,8 @@ function createEmptyTeamStats(teamName) {
     eventWins: 0,
     eventLosses: 0,
     eventTotal: 0,
-    eventFallback: false
+    eventFallback: false,
+    roster: null
   };
 }
 
@@ -40,7 +41,11 @@ function createNormalizedStats({
   team1 = null,
   team2 = null,
   h2h = null,
-  sharedEvent = null
+  sharedEvent = null,
+  // Partidos recientes individuales (para la card y el modelo enriquecido).
+  // Cada objeto: { won, event, opponent, opponentKey, score, dateUnix, format }.
+  recentMatches1 = null,
+  recentMatches2 = null
 }) {
   return {
     source,
@@ -48,7 +53,9 @@ function createNormalizedStats({
     team1: team1 || createEmptyTeamStats(team1Name),
     team2: team2 || createEmptyTeamStats(team2Name),
     h2h: h2h || { total: 0, team1Wins: 0, team2Wins: 0 },
-    sharedEvent: sharedEvent || null
+    sharedEvent: sharedEvent || null,
+    recentMatches1: recentMatches1 || null,
+    recentMatches2: recentMatches2 || null
   };
 }
 

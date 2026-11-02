@@ -275,6 +275,25 @@
               <input type="text" id="team2Input" class="input" placeholder="Equipo 2 (ej: BetBoom)">
               <button id="manualAnalyzeBtn" class="btn-manual">Analizar</button>
             </div>
+            <div class="manual-context-row" style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
+              <select id="manualMapSelect" class="input" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;background:rgba(255,255,255,0.05);color:var(--text-primary);border-radius:6px;border:1px solid var(--border);">
+                <option value="">🗺️ Partido / Serie</option>
+                <option value="1">Mapa 1</option>
+                <option value="2">Mapa 2</option>
+                <option value="3">Mapa 3 (Decider)</option>
+              </select>
+              <select id="manualSeriesScore" class="input" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;background:rgba(255,255,255,0.05);color:var(--text-primary);border-radius:6px;border:1px solid var(--border);">
+                <option value="">⚔️ Serie: 0-0</option>
+                <option value="1-0">Eq. 1 lidera 1-0</option>
+                <option value="0-1">Eq. 2 lidera 0-1</option>
+                <option value="1-1">Empate 1-1</option>
+              </select>
+              <select id="manualPickSelect" class="input" style="flex:1;min-width:110px;padding:5px 8px;font-size:12px;background:rgba(255,255,255,0.05);color:var(--text-primary);border-radius:6px;border:1px solid var(--border);">
+                <option value="">🎯 Pick: Sin asignar</option>
+                <option value="team1">Pick de Eq. 1</option>
+                <option value="team2">Pick de Eq. 2</option>
+              </select>
+            </div>
             <div class="quick-picks">
               <button class="quick-team" data-target="team1Input" data-team="Natus Vincere">NaVi</button>
               <button class="quick-team" data-target="team1Input" data-team="FaZe">FaZe</button>
