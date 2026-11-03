@@ -295,13 +295,60 @@ async function searchTeam(teamName) {
 }
 
 /**
- * Equipos con ID de HLTV fijo. Se usan cuando el nombre es ambiguo, el equipo
- * no está en el ranking top, o la búsqueda falla (p.ej. "barca" devuelve el
- * equipo de fútbol o cualquier otro resultado antes que el equipo de CS2).
- * Clave: normKey del nombre tal como lo escribe Forg1.
+ * IDs fijos de equipos en HLTV. Se usan cuando el nombre es ambiguo, el equipo
+ * no está en el ranking top, o la búsqueda falla.
  */
 const HLTV_TEAM_IDS = {
   barca: { id: '14107', slug: 'barca', name: 'BARCA' }
+};
+
+/**
+ * IDs fijos de jugadores en HLTV. Cuando un jugador no aparece en la búsqueda
+ * (Cloudflare bloqueó el endpoint, nombre muy genérico, etc.) se salta directo
+ * a la página de stats con el ID. Clave: nickKey del nick tal como lo escribe Forg1.
+ * Para agregar más: npm run dev -> ver el log "[HLTV] Buscando jugador" y agregar aquí.
+ */
+const HLTV_PLAYER_IDS = {
+  // Aurora Gaming
+  xantares:  { id: '7533',  slug: 'XANTARES' },
+  woxic:     { id: '11816', slug: 'woxic'    },
+  wicadia:   { id: '20636', slug: 'Wicadia'  },
+  kyxsan:    { id: '15352', slug: 'kyxsan'   },
+  jimpphat:  { id: '19744', slug: 'Jimpphat' },
+  // Bestia / Latinoamérica
+  buda:      { id: '10483', slug: 'buda'     },
+  laser:     { id: '22770', slug: 'laser'    },
+  zevy:      { id: '20065', slug: 'Zevy'     },
+  meyern:    { id: '16267', slug: 'meyern'   },
+  max:       { id: '19001', slug: 'max'      },
+  // 100 Thieves
+  device:    { id: '7592',  slug: 'device'   },
+  // Natus Vincere
+  aleksib:   { id: '10397', slug: 'aleksib'  },
+  // Spirit
+  donk:      { id: '22716', slug: 'donk'     },
+  sh1ro:     { id: '12578', slug: 'sh1ro'    },
+  zont1x:    { id: '20641', slug: 'zont1x'   },
+  magixx:    { id: '19193', slug: 'magixx'   },
+  // G2
+  monesy:    { id: '19230', slug: 'm0NESY'   },
+  m0nesy:    { id: '19230', slug: 'm0NESY'   },
+  // Vitality
+  zywoo:     { id: '11893', slug: 'ZywOo'    },
+  // MOUZ
+  torzsi:    { id: '18127', slug: 'torzsi'   },
+  spinx:     { id: '14261', slug: 'Spinx'    },
+  // FaZe
+  karrigan:  { id: '429',   slug: 'karrigan' },
+  ropz:      { id: '16803', slug: 'ropz'     },
+  // Falcons
+  niko:      { id: '3741',  slug: 'NiKo'     },
+  // FURIA
+  fallen:    { id: '1534',  slug: 'FalleN'   },
+  kscerato:  { id: '11517', slug: 'KSCERATO' },
+  yuurih:    { id: '11507', slug: 'yuurih'   },
+  yekindar:  { id: '12011', slug: 'YEKINDAR' },
+  molodoy:   { id: '22703', slug: 'molodoy'  },
 };
 
 /**
@@ -913,6 +960,19 @@ async function getPlayerKillStats(playerName, teamHints = []) {
     const mentionsReal = nickKey(alias.alias).includes(nickKey(alias.player));
     return mentionsReal ? real : `${real} ("${alias.alias}")`;
   };
+
+  // ID fijo: saltear búsqueda completamente y scrapeamos directo.
+  const pinnedKey = nickKey(query);
+  const pinned = HLTV_PLAYER_IDS[pinnedKey];
+  if (pinned) {
+    console.log(`[HLTV] ID fijo jugador: "${query}" → ${pinned.id}/${pinned.slug}`);
+    const maps = await scrapePlayerMatchMaps({ id: pinned.id, slug: pinned.slug });
+    if (maps.length) {
+      return { found: true, playerName: label(pinned.slug), source: 'hltv',
+        playerId: pinned.id, slug: pinned.slug, team: null, maps };
+    }
+    console.warn(`[HLTV] ID fijo ${pinned.id} no trajo mapas, intentando búsqueda normal`);
+  }
 
   let candidates = await searchPlayerCandidates(query);
   // "APODO Nick" sin sobrenombre cargado: probar cada palabra (la última primero,
